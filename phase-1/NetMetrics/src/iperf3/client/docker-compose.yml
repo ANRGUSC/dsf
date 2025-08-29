@@ -1,0 +1,10 @@
+version: "3.8"
+
+services:
+  network-metrics:
+    image: mohammadalikh/net-metrics:latest
+    restart: unless-stopped
+    cap_add:
+      - NET_RAW
+    environment:
+      - MY_NODE_NAME=${HOSTNAME}

@@ -1,0 +1,8 @@
+services:
+  iperf3:
+    image: networkstatic/iperf3
+    command: -s
+    restart: unless-stopped
+    ports:
+      - "5201:5201/tcp"
+      - "5201:5201/udp"
