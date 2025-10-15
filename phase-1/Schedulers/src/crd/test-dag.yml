@@ -1,0 +1,40 @@
+apiVersion: workflow.example.com/v1
+kind: DAG
+metadata:
+  name: sample-workflow
+spec:
+  steps:
+    - name: step1
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'Step 1 completed'; sleep 10; exit 0"]
+      dependencies: []
+      retryPolicy:
+        maxRetries: 2
+        backoff: "exponential"
+    - name: step2
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'Step 2 completed'; sleep 10; exit 0"]
+      dependencies: ["step1"]
+      retryPolicy:
+        maxRetries: 3
+        backoff: "linear"
+    - name: step3
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'Step 3 completed'; sleep 10; exit 0"]
+      dependencies: ["step1"]
+      retryPolicy:
+        maxRetries: 1
+        backoff: "exponential"
+    - name: step4
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'Step 4 completed'; sleep 3600"]
+      dependencies: ["step2", "step3"]
+      retryPolicy:
+        maxRetries: 2
+        backoff: "exponential"
+  schedulerName: random-scheduler
+  namespace: default

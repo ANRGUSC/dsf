@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dag-step1
+spec:
+  schedulerName: random-scheduler
+  containers:
+    - name: step1
+      image: busybox
+      command: ["sh", "-c", "echo 'Step 1 completed'; sleep 5; exit 0"]
+  restartPolicy: Never
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dag-step2
+spec:
+  schedulerName: random-scheduler
+  serviceAccountName: dag-pods
+  initContainers:
+    - name: wait-for-step1
+      image: bitnami/kubectl
+      command: ["sh", "-c", "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/dag-step1"]
+  containers:
+    - name: step2
+      image: busybox
+      command: ["sh", "-c", "echo 'Step 2 completed'; sleep 5; exit 0"]
+  restartPolicy: Never
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dag-step3
+spec:
+  schedulerName: random-scheduler
+  serviceAccountName: dag-pods
+  initContainers:
+    - name: wait-for-step2
+      image: bitnami/kubectl
+      command: ["sh", "-c", "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/dag-step2"]
+  containers:
+    - name: step3
+      image: busybox
+      command: ["sh", "-c", "echo 'Step 3 completed'; sleep 5; exit 0"]
+  restartPolicy: Never
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dag-step4
+spec:
+  schedulerName: random-scheduler
+  serviceAccountName: dag-pods
+  initContainers:
+    - name: wait-for-step3
+      image: bitnami/kubectl
+      command: ["sh", "-c", "kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/dag-step3"]
+  containers:
+    - name: step4
+      image: busybox
+      command: ["sh", "-c", "echo 'Step 4 completed'; sleep 3600"]
+  restartPolicy: Never

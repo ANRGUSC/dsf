@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: random-scheduler
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: random-scheduler
+  template:
+    metadata:
+      labels:
+        app: random-scheduler
+    spec:
+      serviceAccountName: random-scheduler
+      containers:
+        - name: random-scheduler
+          image: mohammadalikh/random-scheduler:latest
+          args:
+            - "--kubeconfig="
+          imagePullPolicy: Always
