@@ -255,6 +255,12 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 				"dag-name": obj.GetName(),
 				"dag-step": stepName,
 			},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "workflow.example.com/v1",
+				Kind:       "DAG",
+				Name:       obj.GetName(),
+				UID:        obj.GetUID(),
+			}},
 		},
 		Spec: corev1.PodSpec{
 			SchedulerName: schedulerName,
