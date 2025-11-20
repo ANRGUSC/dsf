@@ -42,6 +42,18 @@ spec:
                       type: array
                       items:
                         type: string
+                    dataSize:
+                      type: string
+                      description: "Size of output data (e.g., 100MB, 1GB)"
+                    runtime:
+                      type: integer
+                      description: "Expected runtime in seconds"
+                    cpu:
+                      type: string
+                      description: "CPU requirement (e.g., 500m, 1)"
+                    memory:
+                      type: string
+                      description: "Memory requirement (e.g., 256Mi, 1Gi)"
                     resources:
                       type: object
                       properties:

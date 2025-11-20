@@ -52,5 +52,5 @@ spec:
       retryPolicy:
         maxRetries: 2
         backoff: "exponential"
-  schedulerName: random-scheduler
+  schedulerName: heft-scheduler
   namespace: default
