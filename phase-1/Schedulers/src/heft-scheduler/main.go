@@ -660,18 +660,59 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 
 	podName := fmt.Sprintf("%s-%s", obj.GetName(), stepName)
 
-	// Build command for main container that handles data transfer
-	mainCommand := buildMainContainerCommand(dependencies, obj.GetName(), command, args)
+	// Get dependency node assignments from HEFT schedule
+	depNodes := getDependencyNodesHEFT(obj.GetName(), dependencies)
+	useSharedMemory, sharedNode := allDepsOnSameNode(depNodes)
 
-	// Create containers: main container + sidecar TCP server
+	// Get current task's assigned node from HEFT schedule
+	heftSchedule.mu.RLock()
+	assignments, exists := heftSchedule.taskAssignments[obj.GetName()]
+	heftSchedule.mu.RUnlock()
+
+	var currentTaskNode string
+	if exists {
+		currentTaskNode = assignments[stepName]
+		// Check if current task is also on the same node as all dependencies
+		if useSharedMemory && currentTaskNode == sharedNode {
+			log.Printf("[HEFT] Step %s and all dependencies are on node %s, using shared memory", stepName, sharedNode)
+		} else if useSharedMemory && currentTaskNode != sharedNode {
+			// Dependencies are on one node, but task is scheduled elsewhere - use TCP
+			useSharedMemory = false
+			log.Printf("[HEFT] Step %s is on %s but dependencies are on %s, using TCP networking", stepName, currentTaskNode, sharedNode)
+		} else if len(depNodes) > 0 {
+			log.Printf("[HEFT] Dependencies for step %s are on different nodes, using TCP networking", stepName)
+		}
+	}
+
+	// Build command for main container that handles data transfer
+	mainCommand := buildMainContainerCommand(dependencies, obj.GetName(), command, args, depNodes, useSharedMemory, sharedNode)
+
+	// Determine if we need TCP server (only if there are cross-node dependencies)
+	needsTCPServer := !useSharedMemory && len(dependencies) > 0
+
+	// Prepare volume mounts for shared memory
+	volumeMounts := []corev1.VolumeMount{}
+	if useSharedMemory {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "shared-data",
+			MountPath: "/shared-data",
+		})
+	}
+
+	// Create containers: main container + optional sidecar TCP server
 	containers := []corev1.Container{
 		{
-			Name:    stepName,
-			Image:   image,
-			Command: []string{"sh", "-c"},
-			Args:    []string{mainCommand},
+			Name:         stepName,
+			Image:        image,
+			Command:      []string{"sh", "-c"},
+			Args:         []string{mainCommand},
+			VolumeMounts: volumeMounts,
 		},
-		{
+	}
+
+	// Add sidecar TCP server only if needed (cross-node dependencies)
+	if needsTCPServer {
+		containers = append(containers, corev1.Container{
 			Name:    "data-server",
 			Image:   "busybox",
 			Command: []string{"sh", "-c"},
@@ -738,7 +779,65 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 					echo "Data server shutting down after timeout"
 				`, dataSize, stepName, stepName),
 			},
-		},
+		})
+	} else if useSharedMemory {
+		// For shared memory, create data in hostPath volume
+		containers = append(containers, corev1.Container{
+			Name:         "data-writer",
+			Image:        "busybox",
+			Command:      []string{"sh", "-c"},
+			VolumeMounts: volumeMounts,
+			Args: []string{
+				fmt.Sprintf(`
+					# Create output data file in shared memory location
+					SHARED_DIR="/shared-data/%s-%s"
+					mkdir -p $SHARED_DIR
+					
+					# Parse size (e.g., "100MB" -> 100 and M)
+					SIZE="%s"
+					echo "Creating data file of size $SIZE in shared memory..."
+					
+					# Extract number and unit (e.g., "100MB" -> "100" and "M")
+					NUM=$(echo $SIZE | sed 's/[^0-9]//g')
+					UNIT=$(echo $SIZE | sed 's/[0-9]//g' | sed 's/B$//' | tr '[:lower:]' '[:upper:]')
+					
+					if [ -z "$NUM" ] || [ "$NUM" = "" ]; then
+						# If no size specified, create small file
+						echo "Data from %s" > $SHARED_DIR/output.txt
+					else
+						# Create actual sized file with zeros (faster than urandom)
+						# Use busybox-compatible syntax: bs=1M count=100
+						dd if=/dev/zero of=$SHARED_DIR/output.txt bs=1${UNIT} count=${NUM} 2>/dev/null || echo "Data from %s" > $SHARED_DIR/output.txt
+					fi
+					
+					FILE_SIZE=$(ls -lh $SHARED_DIR/output.txt | awk '{print $5}')
+					echo "Created output file in shared memory: $FILE_SIZE"
+					
+					# Keep container running until main container completes
+					# Wait for main container to finish (check via shared file or timeout)
+					sleep 300
+				`, obj.GetName(), stepName, dataSize, stepName, stepName),
+			},
+		})
+	}
+
+	// Prepare volumes for shared memory
+	volumes := []corev1.Volume{}
+
+	if useSharedMemory {
+		// Add hostPath volume for shared memory
+		volumes = append(volumes, corev1.Volume{
+			Name: "shared-data",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/tmp/shared-data",
+					Type: func() *corev1.HostPathType {
+						dirOrCreate := corev1.HostPathDirectoryOrCreate
+						return &dirOrCreate
+					}(),
+				},
+			},
+		})
 	}
 
 	pod := &corev1.Pod{
@@ -760,6 +859,7 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 			SchedulerName: schedulerName,
 			Containers:    containers,
 			RestartPolicy: corev1.RestartPolicyNever,
+			Volumes:       volumes,
 		},
 	}
 
@@ -768,41 +868,111 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 		log.Printf("Error creating pod for step %s: %v", stepName, err)
 		return
 	}
-	log.Printf("Created pod for step %s in DAG %s with sidecar", stepName, obj.GetName())
 
-	// Create Service for this pod
-	createServiceForStep(client, obj.GetName(), stepName, namespace, obj.GetUID())
+	if useSharedMemory {
+		log.Printf("[HEFT] Created pod for step %s in DAG %s with shared memory (node: %s)", stepName, obj.GetName(), sharedNode)
+	} else if needsTCPServer {
+		log.Printf("[HEFT] Created pod for step %s in DAG %s with TCP sidecar", stepName, obj.GetName())
+	} else {
+		log.Printf("[HEFT] Created pod for step %s in DAG %s", stepName, obj.GetName())
+	}
+
+	// Create Service for this pod only if TCP server is needed
+	if needsTCPServer {
+		createServiceForStep(client, obj.GetName(), stepName, namespace, obj.GetUID())
+	}
+}
+
+// Get dependency node assignments from HEFT schedule
+func getDependencyNodesHEFT(dagName string, dependencies []string) map[string]string {
+	depNodes := make(map[string]string)
+
+	heftSchedule.mu.RLock()
+	assignments, exists := heftSchedule.taskAssignments[dagName]
+	heftSchedule.mu.RUnlock()
+
+	if !exists {
+		return depNodes
+	}
+
+	for _, dep := range dependencies {
+		if node, ok := assignments[dep]; ok {
+			depNodes[dep] = node
+		}
+	}
+
+	return depNodes
+}
+
+// Check if all dependencies are on the same node
+func allDepsOnSameNode(depNodes map[string]string) (bool, string) {
+	if len(depNodes) == 0 {
+		return false, ""
+	}
+
+	var commonNode string
+	for _, node := range depNodes {
+		if commonNode == "" {
+			commonNode = node
+		} else if node != commonNode {
+			return false, ""
+		}
+	}
+	return true, commonNode
 }
 
 // Build command for main container that downloads data from dependencies first
-func buildMainContainerCommand(dependencies []string, dagName string, command []string, args []string) string {
+func buildMainContainerCommand(dependencies []string, dagName string, command []string, args []string, depNodes map[string]string, useSharedMemory bool, sharedNode string) string {
 	var cmdParts []string
 
 	// Add data transfer logic if there are dependencies
 	if len(dependencies) > 0 {
 		cmdParts = append(cmdParts, "echo 'Fetching data from dependencies...'")
 		for _, dep := range dependencies {
-			serviceName := fmt.Sprintf("%s-%s-svc", dagName, dep)
-			// Download the file with retry logic
-			cmdParts = append(cmdParts, fmt.Sprintf(
-				"echo 'Connecting to %s (%s:8080)...'; "+
-					"for i in 1 2 3 4 5; do "+
-					"  echo 'Attempt '$i' to connect to %s...'; "+
-					"  nc -w 10 %s 8080 > /tmp/%s-data.txt 2>&1 && echo 'Connected successfully!' && break || echo 'Connection failed, retrying...'; "+
-					"  sleep 2; "+
-					"done",
-				dep, serviceName, dep, serviceName, dep,
-			))
-			// Verify and log the downloaded file
-			cmdParts = append(cmdParts, fmt.Sprintf(
-				"if [ -f /tmp/%s-data.txt ]; then "+
-					"FILE_SIZE=$(ls -lh /tmp/%s-data.txt | awk '{print $5}'); "+
-					"echo 'Successfully received file from %s (size: '$FILE_SIZE')'; "+
-					"echo 'First 10 bytes of received data:'; "+
-					"head -c 10 /tmp/%s-data.txt | od -An -tx1; "+
-					"else echo 'ERROR: File /tmp/%s-data.txt not created'; fi",
-				dep, dep, dep, dep, dep,
-			))
+			if useSharedMemory && depNodes[dep] == sharedNode {
+				// Use shared memory (hostPath volume)
+				sharedPath := fmt.Sprintf("/shared-data/%s-%s/output.txt", dagName, dep)
+				cmdParts = append(cmdParts, fmt.Sprintf(
+					"echo 'Reading from shared memory for %s...'; "+
+						"if [ -f %s ]; then "+
+						"  cp %s /tmp/%s-data.txt && "+
+						"  FILE_SIZE=$(ls -lh /tmp/%s-data.txt | awk '{print $5}'); "+
+						"  echo 'Successfully read file from %s via shared memory (size: '$FILE_SIZE')'; "+
+						"  echo 'First 10 bytes of received data:'; "+
+						"  head -c 10 /tmp/%s-data.txt | od -An -tx1; "+
+						"else "+
+						"  echo 'ERROR: Shared file %s not found, waiting...'; "+
+						"  for i in 1 2 3 4 5; do "+
+						"    sleep 2; "+
+						"    if [ -f %s ]; then cp %s /tmp/%s-data.txt && break; fi; "+
+						"  done; "+
+						"fi",
+					dep, sharedPath, sharedPath, dep, dep, dep, dep, sharedPath, sharedPath, sharedPath, dep,
+				))
+			} else {
+				// Use TCP networking
+				serviceName := fmt.Sprintf("%s-%s-svc", dagName, dep)
+				// Download the file with retry logic
+				cmdParts = append(cmdParts, fmt.Sprintf(
+					"echo 'Connecting to %s (%s:8080)...'; "+
+						"for i in 1 2 3 4 5; do "+
+						"  echo 'Attempt '$i' to connect to %s...'; "+
+						"  nc -w 10 %s 8080 > /tmp/%s-data.txt 2>&1 && echo 'Connected successfully!' && break || echo 'Connection failed, retrying...'; "+
+						"  sleep 2; "+
+						"done",
+					dep, serviceName, dep, serviceName, dep,
+				))
+				// Verify and log the downloaded file
+				cmdParts = append(cmdParts, fmt.Sprintf(
+					"if [ -f /tmp/%s-data.txt ]; then "+
+						"FILE_SIZE=$(ls -lh /tmp/%s-data.txt | awk '{print $5}'); "+
+						"echo 'Successfully received file from %s (size: '$FILE_SIZE')'; "+
+						"echo 'First 10 bytes of received data:'; "+
+						"head -c 10 /tmp/%s-data.txt | od -An -tx1; "+
+						"else echo 'ERROR: File /tmp/%s-data.txt not created'; fi",
+					dep, dep, dep, dep, dep,
+				))
+			}
 		}
 		cmdParts = append(cmdParts, "echo 'Data transfer complete'")
 	}
