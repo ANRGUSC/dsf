@@ -1,0 +1,266 @@
+apiVersion: dsf.example.com/v1
+kind: ContinuousTaskGraph
+metadata:
+  name: comprehensive-example
+  namespace: production
+spec:
+  # Global ZeroMQ Configuration (all fields)
+  zeromq:
+    discovery:
+      method: kubernetes
+      namespace: production
+      serviceNamePattern: "{task-name}-service"
+    topicPrefix: comprehensive-example
+    defaultPort: 5555
+    defaultTransport: tcp
+    connectionTimeout: 5000
+    reconnectInterval: 1000
+    maxReconnectAttempts: 10
+
+  # Scheduler Configuration (all fields)
+  scheduler:
+    name: custom-scheduler
+    optimizeFor: throughput
+    placementConstraints:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: compute
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - comprehensive-example
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "compute"
+        effect: "NoSchedule"
+
+  # Migration Controller Configuration (all fields)
+  migration:
+    enabled: true
+    partitionDetectionInterval: 10
+    heartbeatInterval: 5
+    heartbeatTimeout: 30
+
+  # Namespace
+  namespace: production
+
+  # Task Definitions
+  tasks:
+    # Task 1: Stateless task with minimal config
+    - name: data-source
+      image: data-source:1.0.0
+      command: ["python", "producer.py"]
+      args: ["--source", "sensor-1", "--rate", "100"]
+      dependencies: []
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+      replicas: 1
+      zeromq:
+        publishTopics:
+          - comprehensive-example/data-source/raw
+          - comprehensive-example/data-source/metrics
+        subscribeTopics: []
+        pattern: PUB
+        port: 5555
+        transport: tcp
+        bind: true
+        dataTopic: comprehensive-example/data-source/raw
+      stateful: false
+      throughputTarget:
+        messagesPerSecond: 100
+        bytesPerSecond: "5MB/s"
+      migrationPolicy:
+        enabled: true
+        triggerConditions:
+          networkPartition: true
+          nodeFailure: true
+          highLatency: false
+          lowThroughput: false
+        migrationStrategy: immediate
+      retryPolicy:
+        maxRetries: 3
+        backoff: exponential
+      constraints:
+        nodeName: anrg-1
+
+    # Task 2: Stateless task with multiple replicas and all migration triggers
+    - name: data-processor
+      image: data-processor:1.0.0
+      command: ["python", "process.py"]
+      args: ["--algorithm", "fft", "--window", "1024"]
+      dependencies: ["data-source"]
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "512Mi"
+        limits:
+          cpu: "2000m"
+          memory: "2Gi"
+      replicas: 3
+      zeromq:
+        publishTopics:
+          - comprehensive-example/data-processor/processed
+        subscribeTopics:
+          - comprehensive-example/data-source/raw
+        pattern: SUB
+        port: 5556
+        transport: tcp
+        bind: false
+        dataTopic: comprehensive-example/data-processor/processed
+      stateful: false
+      throughputTarget:
+        messagesPerSecond: 100
+        bytesPerSecond: "4MB/s"
+      migrationPolicy:
+        enabled: true
+        triggerConditions:
+          networkPartition: true
+          nodeFailure: true
+          highLatency: true
+          latencyThresholdMs: 150
+          lowThroughput: true
+          throughputThresholdPercent: 80
+        migrationStrategy: rolling
+      retryPolicy:
+        maxRetries: 5
+        backoff: linear
+
+    # Task 3: Stateful task with checkpointing
+    - name: stateful-aggregator
+      image: aggregator:1.0.0
+      command: ["python", "aggregate.py"]
+      args: ["--window", "60s", "--state-dir", "/state"]
+      dependencies: ["data-processor"]
+      resources:
+        requests:
+          cpu: "1000m"
+          memory: "1Gi"
+        limits:
+          cpu: "4000m"
+          memory: "4Gi"
+      replicas: 1
+      zeromq:
+        publishTopics:
+          - comprehensive-example/stateful-aggregator/summary
+          - comprehensive-example/stateful-aggregator/alerts
+        subscribeTopics:
+          - comprehensive-example/data-processor/processed
+        pattern: SUB
+        port: 5557
+        transport: tcp
+        bind: false
+        dataTopic: comprehensive-example/stateful-aggregator/summary
+      stateful: true
+      checkpointInterval: 300
+      throughputTarget:
+        messagesPerSecond: 10
+        bytesPerSecond: "1MB/s"
+      migrationPolicy:
+        enabled: true
+        triggerConditions:
+          networkPartition: true
+          nodeFailure: true
+          highLatency: true
+          latencyThresholdMs: 500
+          lowThroughput: false
+        migrationStrategy: drain
+      retryPolicy:
+        maxRetries: 2
+        backoff: exponential
+      constraints:
+        nodeNames:
+          - anrg-1
+          - anrg-2
+          - anrg-3
+
+    # Task 4: Task with migration disabled
+    - name: monitoring-task
+      image: monitoring:1.0.0
+      command: ["python", "monitor.py"]
+      args: ["--interval", "10s"]
+      dependencies: ["stateful-aggregator"]
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "64Mi"
+        limits:
+          cpu: "200m"
+          memory: "128Mi"
+      replicas: 1
+      zeromq:
+        publishTopics:
+          - comprehensive-example/monitoring-task/metrics
+        subscribeTopics:
+          - comprehensive-example/stateful-aggregator/summary
+        pattern: SUB
+        port: 5558
+        transport: tcp
+        bind: false
+        dataTopic: comprehensive-example/monitoring-task/metrics
+      stateful: false
+      throughputTarget:
+        messagesPerSecond: 1
+        bytesPerSecond: "10KB/s"
+      migrationPolicy:
+        enabled: false
+      retryPolicy:
+        maxRetries: 1
+        backoff: linear
+
+    # Task 5: Task with all QoS levels and complex dependencies
+    - name: final-processor
+      image: final-processor:1.0.0
+      command: ["python", "finalize.py"]
+      args: ["--output", "results"]
+      dependencies: ["data-processor", "stateful-aggregator"]
+      resources:
+        requests:
+          cpu: "750m"
+          memory: "768Mi"
+        limits:
+          cpu: "3000m"
+          memory: "3Gi"
+      replicas: 2
+      zeromq:
+        publishTopics:
+          - comprehensive-example/final-processor/output
+        subscribeTopics:
+          - comprehensive-example/data-processor/processed
+          - comprehensive-example/stateful-aggregator/summary
+        pattern: SUB
+        port: 5559
+        transport: tcp
+        bind: false
+        dataTopic: comprehensive-example/final-processor/output
+      stateful: false
+      throughputTarget:
+        messagesPerSecond: 50
+        bytesPerSecond: "2MB/s"
+      migrationPolicy:
+        enabled: true
+        triggerConditions:
+          networkPartition: true
+          nodeFailure: true
+          highLatency: true
+          latencyThresholdMs: 200
+          lowThroughput: true
+          throughputThresholdPercent: 75
+        migrationStrategy: rolling
+      retryPolicy:
+        maxRetries: 4
+        backoff: exponential
+

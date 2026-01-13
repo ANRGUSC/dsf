@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctg-scheduler
+  namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ctg-scheduler
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/status", "pods/binding", "nodes", "services"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["dsf.example.com"]
+    resources: ["continuoustaskgraphs"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ctg-scheduler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ctg-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: ctg-scheduler
+    namespace: kube-system

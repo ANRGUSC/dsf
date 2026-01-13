@@ -1,0 +1,488 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: continuoustaskgraphs.dsf.example.com
+spec:
+  group: dsf.example.com
+  scope: Namespaced
+  names:
+    plural: continuoustaskgraphs
+    singular: continuoustaskgraph
+    kind: ContinuousTaskGraph
+    shortNames:
+    - ctg
+    listKind: ContinuousTaskGraphList
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required:
+            - tasks
+            - zeromq
+            properties:
+              # Task definitions
+              tasks:
+                type: array
+                description: "List of tasks in the continuous execution graph"
+                items:
+                  type: object
+                  required:
+                  - name
+                  - image
+                  properties:
+                    name:
+                      type: string
+                      description: "Unique task name within the graph"
+                    image:
+                      type: string
+                      description: "Container image for the task"
+                    command:
+                      type: array
+                      items:
+                        type: string
+                      description: "Container command"
+                    args:
+                      type: array
+                      items:
+                        type: string
+                      description: "Container arguments"
+                    dependencies:
+                      type: array
+                      items:
+                        type: string
+                      description: "List of task names this task depends on"
+                    # Resource requirements
+                    resources:
+                      type: object
+                      description: "Kubernetes resource requests and limits"
+                      additionalProperties: true
+                      properties:
+                        requests:
+                          type: object
+                          description: "Resource requests (e.g., cpu: 500m, memory: 256Mi)"
+                          additionalProperties: true
+                        limits:
+                          type: object
+                          description: "Resource limits (e.g., cpu: 1000m, memory: 512Mi)"
+                          additionalProperties: true
+                    # Replication for high availability
+                    replicas:
+                      type: integer
+                      description: "Number of replicas for this task (default: 1)"
+                      minimum: 1
+                      default: 1
+                    # ZeroMQ configuration per task
+                    zeromq:
+                      type: object
+                      description: "ZeroMQ-specific configuration for this task"
+                      properties:
+                        publishTopics:
+                          type: array
+                          items:
+                            type: string
+                          description: "ZeroMQ topics this task publishes to"
+                        subscribeTopics:
+                          type: array
+                          items:
+                            type: string
+                          description: "ZeroMQ topics this task subscribes to"
+                        pattern:
+                          type: string
+                          description: "ZeroMQ messaging pattern"
+                          enum: ["PUB", "SUB", "REQ", "REP", "PUSH", "PULL", "ROUTER", "DEALER"]
+                          default: "PUB"
+                        port:
+                          type: integer
+                          description: "Port this task listens on for ZeroMQ connections"
+                          minimum: 1024
+                          maximum: 65535
+                        transport:
+                          type: string
+                          description: "Transport protocol"
+                          enum: ["tcp", "ipc", "inproc"]
+                          default: "tcp"
+                        bind:
+                          type: boolean
+                          description: "Whether to bind (true) or connect (false) to the port"
+                          default: true
+                        dataTopic:
+                          type: string
+                          description: "Primary topic for data transfer (auto-generated if not specified)"
+                    # State management
+                    stateful:
+                      type: boolean
+                      description: "Whether this task maintains state that needs checkpointing"
+                      default: false
+                    checkpointInterval:
+                      type: integer
+                      description: "Checkpoint interval in seconds (only for stateful tasks)"
+                      minimum: 1
+                    # Throughput targets
+                    throughputTarget:
+                      type: object
+                      description: "Target throughput for this task"
+                      properties:
+                        messagesPerSecond:
+                          type: integer
+                          description: "Target messages per second"
+                        bytesPerSecond:
+                          type: string
+                          description: "Target bytes per second (e.g., 10MB/s)"
+                    # Migration policy
+                    migrationPolicy:
+                      type: object
+                      description: "Policy for migrating this task"
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: "Whether migration is enabled for this task"
+                          default: true
+                        triggerConditions:
+                          type: object
+                          description: "Conditions that trigger migration"
+                          properties:
+                            networkPartition:
+                              type: boolean
+                              description: "Migrate on network partition"
+                              default: true
+                            nodeFailure:
+                              type: boolean
+                              description: "Migrate on node failure"
+                              default: true
+                            highLatency:
+                              type: boolean
+                              description: "Migrate if latency exceeds threshold"
+                              default: false
+                            latencyThresholdMs:
+                              type: integer
+                              description: "Latency threshold in milliseconds"
+                            lowThroughput:
+                              type: boolean
+                              description: "Migrate if throughput drops below threshold"
+                              default: false
+                            throughputThresholdPercent:
+                              type: integer
+                              description: "Throughput threshold as percentage of target"
+                              minimum: 0
+                              maximum: 100
+                        migrationStrategy:
+                          type: string
+                          description: "Migration strategy"
+                          enum: ["immediate", "rolling", "drain"]
+                          default: "rolling"
+                    # Retry policy
+                    retryPolicy:
+                      type: object
+                      properties:
+                        maxRetries:
+                          type: integer
+                          default: 3
+                        backoff:
+                          type: string
+                          enum: ["linear", "exponential"]
+                          default: "exponential"
+                    # Scheduling constraints
+                    constraints:
+                      type: object
+                      description: "Scheduling constraints for this task (optional)"
+                      properties:
+                        nodeName:
+                          type: string
+                          description: "Schedule this task only on a specific node by name (single node)"
+                        nodeNames:
+                          type: array
+                          items:
+                            type: string
+                          description: "Schedule this task on one of the specified nodes (list of node names)"
+                        nodeSelector:
+                          type: object
+                          description: "Node selector labels (e.g., kubernetes.io/arch: amd64)"
+                          additionalProperties:
+                            type: string
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          type: object
+                          description: "Required node affinity rules"
+                          properties:
+                            nodeSelectorTerms:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  matchExpressions:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        key:
+                                          type: string
+                                        operator:
+                                          type: string
+                                          enum: ["In", "NotIn", "Exists", "DoesNotExist", "Gt", "Lt"]
+                                        values:
+                                          type: array
+                                          items:
+                                            type: string
+                                  matchFields:
+                                    type: array
+                                    items:
+                                      type: object
+                        preferredDuringSchedulingIgnoredDuringExecution:
+                          type: array
+                          description: "Preferred node affinity rules"
+                          items:
+                            type: object
+                            properties:
+                              weight:
+                                type: integer
+                                minimum: 1
+                                maximum: 100
+                              preference:
+                                type: object
+                                properties:
+                                  matchExpressions:
+                                    type: array
+                                    items:
+                                      type: object
+                                  matchFields:
+                                    type: array
+                                    items:
+                                      type: object
+                        podAffinity:
+                          type: object
+                          description: "Pod affinity rules (co-locate with other pods)"
+                        podAntiAffinity:
+                          type: object
+                          description: "Pod anti-affinity rules (avoid co-location with other pods)"
+                        tolerations:
+                          type: array
+                          description: "Tolerations for tainted nodes"
+                          items:
+                            type: object
+                            properties:
+                              key:
+                                type: string
+                              operator:
+                                type: string
+                                enum: ["Equal", "Exists"]
+                              value:
+                                type: string
+                              effect:
+                                type: string
+                                enum: ["NoSchedule", "PreferNoSchedule", "NoExecute"]
+                              tolerationSeconds:
+                                type: integer
+              # Global ZeroMQ configuration
+              zeromq:
+                type: object
+                properties:
+                  discovery:
+                    type: object
+                    description: "Service discovery configuration"
+                    properties:
+                      method:
+                        type: string
+                        description: "Discovery method"
+                        enum: ["kubernetes", "dns", "static"]
+                        default: "kubernetes"
+                      namespace:
+                        type: string
+                        description: "Kubernetes namespace for service discovery (default: same as graph namespace)"
+                      serviceNamePattern:
+                        type: string
+                        description: "Pattern for Kubernetes service names (e.g., '{task-name}-service')"
+                        default: "{task-name}-service"
+                  topicPrefix:
+                    type: string
+                    description: "Prefix for all ZeroMQ topics (default: graph name)"
+                    default: ""
+                  defaultPort:
+                    type: integer
+                    description: "Default starting port for tasks (ports will be assigned sequentially)"
+                    default: 5555
+                  defaultTransport:
+                    type: string
+                    description: "Default transport protocol"
+                    enum: ["tcp", "ipc", "inproc"]
+                    default: "tcp"
+                  connectionTimeout:
+                    type: integer
+                    description: "Connection timeout in milliseconds"
+                    default: 5000
+                  reconnectInterval:
+                    type: integer
+                    description: "Reconnection interval in milliseconds"
+                    default: 1000
+                  maxReconnectAttempts:
+                    type: integer
+                    description: "Maximum reconnection attempts"
+                    default: 10
+              # Scheduler configuration
+              scheduler:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: "Kubernetes scheduler name to use for pod scheduling"
+                  optimizeFor:
+                    type: string
+                    description: "Optimization target"
+                    enum: ["throughput", "latency", "resource"]
+                    default: "throughput"
+                  placementConstraints:
+                    type: object
+                    description: "Constraints for task placement"
+                    properties:
+                      nodeSelector:
+                        type: object
+                      affinity:
+                        type: object
+                      tolerations:
+                        type: array
+                        items:
+                          type: object
+              # Migration controller configuration
+              migration:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    description: "Enable automatic migration"
+                    default: true
+                  partitionDetectionInterval:
+                    type: integer
+                    description: "Interval for checking network partitions (seconds)"
+                    default: 10
+                  heartbeatInterval:
+                    type: integer
+                    description: "Heartbeat interval for tasks (seconds)"
+                    default: 5
+                  heartbeatTimeout:
+                    type: integer
+                    description: "Timeout before considering task dead (seconds)"
+                    default: 30
+              # Namespace
+              namespace:
+                type: string
+                description: "Kubernetes namespace"
+                default: "default"
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                description: "Current phase of the task graph"
+                enum: ["Pending", "Deploying", "Running", "Migrating", "Degraded", "Failed"]
+              startTime:
+                type: string
+                format: date-time
+                description: "When the graph started running"
+              lastUpdateTime:
+                type: string
+                format: date-time
+                description: "Last status update time"
+              taskStatuses:
+                type: array
+                description: "Status of individual tasks"
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    phase:
+                      type: string
+                      enum: ["Pending", "Deploying", "Running", "Migrating", "Degraded", "Failed"]
+                    nodeName:
+                      type: string
+                      description: "Node where the task is currently running"
+                    replicas:
+                      type: object
+                      properties:
+                        desired:
+                          type: integer
+                        running:
+                          type: integer
+                        ready:
+                          type: integer
+                    throughput:
+                      type: object
+                      properties:
+                        messagesPerSecond:
+                          type: number
+                        bytesPerSecond:
+                          type: number
+                    latency:
+                      type: object
+                      properties:
+                        averageMs:
+                          type: number
+                        p95Ms:
+                          type: number
+                        p99Ms:
+                          type: number
+                    lastHeartbeat:
+                      type: string
+                      format: date-time
+                    migrationHistory:
+                      type: array
+                      description: "History of migrations for this task"
+                      items:
+                        type: object
+                        properties:
+                          timestamp:
+                            type: string
+                            format: date-time
+                          fromNode:
+                            type: string
+                          toNode:
+                            type: string
+                          reason:
+                            type: string
+                          duration:
+                            type: string
+              metrics:
+                type: object
+                description: "Aggregate metrics for the entire graph"
+                properties:
+                  totalThroughput:
+                    type: object
+                    properties:
+                      messagesPerSecond:
+                        type: number
+                      bytesPerSecond:
+                        type: number
+                  averageLatency:
+                    type: number
+                  resourceUtilization:
+                    type: object
+                    properties:
+                      cpu:
+                        type: string
+                      memory:
+                        type: string
+              conditions:
+                type: array
+                description: "Conditions representing the current state"
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                      enum: ["True", "False", "Unknown"]
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+    subresources:
+      status: {}
+

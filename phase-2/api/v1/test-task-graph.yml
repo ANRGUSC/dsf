@@ -1,0 +1,102 @@
+apiVersion: dsf.example.com/v1
+kind: ContinuousTaskGraph
+metadata:
+  name: test-task-graph
+  namespace: default
+spec:
+  # Global ZeroMQ Configuration
+  zeromq:
+    discovery:
+      method: kubernetes
+      namespace: default
+      serviceNamePattern: "{task-name}-service"
+    topicPrefix: test-task-graph
+    defaultPort: 5555
+    defaultTransport: tcp
+    connectionTimeout: 5000
+    reconnectInterval: 1000
+    maxReconnectAttempts: 10
+
+  # Scheduler Configuration
+  scheduler:
+    name: ctg-scheduler
+    optimizeFor: throughput
+
+  # Migration Controller Configuration
+  migration:
+    enabled: true
+    partitionDetectionInterval: 10
+    heartbeatInterval: 5
+    heartbeatTimeout: 30
+
+  # Namespace
+  namespace: default
+
+  # Task Definitions
+  tasks:
+    # Task 1: Data source (publisher)
+    - name: data-source
+      image: mohammadalikh/data-source:test
+      command: ["python", "producer.py"]
+      args: []
+      dependencies: []
+      resources:
+        requests:
+          cpu: "200m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+      replicas: 1
+      zeromq:
+        publishTopics:
+          - test-task-graph/data-source/raw
+        subscribeTopics: []
+        pattern: PUB
+        port: 5555
+        transport: tcp
+        bind: true
+      stateful: false
+      throughputTarget:
+        messagesPerSecond: 10
+        bytesPerSecond: "100KB/s"
+      migrationPolicy:
+        enabled: true
+        triggerConditions:
+          networkPartition: true
+          nodeFailure: true
+        migrationStrategy: immediate
+
+    # Task 2: Data processor (subscriber + publisher)
+    - name: data-processor
+      image: mohammadalikh/data-processor:test
+      command: ["python", "process.py"]
+      args: []
+      dependencies: ["data-source"]
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "512Mi"
+        limits:
+          cpu: "2000m"
+          memory: "2Gi"
+      replicas: 1
+      zeromq:
+        publishTopics:
+          - test-task-graph/data-processor/processed
+        subscribeTopics:
+          - test-task-graph/data-source/raw
+        pattern: SUB
+        port: 5556
+        transport: tcp
+        bind: false
+      stateful: false
+      throughputTarget:
+        messagesPerSecond: 10
+        bytesPerSecond: "100KB/s"
+      migrationPolicy:
+        enabled: true
+        triggerConditions:
+          networkPartition: true
+          nodeFailure: true
+        migrationStrategy: rolling
