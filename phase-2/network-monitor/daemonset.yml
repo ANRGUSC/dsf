@@ -1,0 +1,103 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: network-monitor
+  namespace: kube-system
+  labels:
+    app: network-monitor
+spec:
+  selector:
+    matchLabels:
+      app: network-monitor
+  template:
+    metadata:
+      labels:
+        app: network-monitor
+    spec:
+      serviceAccountName: network-monitor
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: network-monitor
+        image: mohammadalikh/network-monitor:latest
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+              - SYS_ADMIN
+              - NET_ADMIN
+              - BPF
+        volumeMounts:
+        # Mount kernel headers
+        - name: kernel-headers
+          mountPath: /usr/src
+          readOnly: true
+        # Mount kernel debug info
+        - name: kernel-debug
+          mountPath: /sys/kernel/debug
+        # Mount BPF filesystem
+        - name: bpf-maps
+          mountPath: /sys/fs/bpf
+        # Shared volume for metrics (optional, for local testing)
+        - name: metrics-volume
+          mountPath: /var/run
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        args:
+        - "5"  # Update interval in seconds
+        - "/var/run/network_metrics.prom"  # Metrics output file
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      # Kernel headers for eBPF compilation
+      - name: kernel-headers
+        hostPath:
+          path: /usr/src
+          type: Directory
+      # Kernel debug filesystem
+      - name: kernel-debug
+        hostPath:
+          path: /sys/kernel/debug
+          type: Directory
+      # BPF filesystem
+      - name: bpf-maps
+        hostPath:
+          path: /sys/fs/bpf
+          type: DirectoryOrCreate
+      # Metrics output directory
+      - name: metrics-volume
+        hostPath:
+          path: /var/run
+          type: Directory
+      tolerations:
+      # Run on all nodes including master
+      - effect: NoSchedule
+        operator: Exists
+---
+# Optional: Service to expose metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: network-monitor-metrics
+  namespace: kube-system
+  labels:
+    app: network-monitor
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service
+  selector:
+    app: network-monitor
+  ports:
+  - name: metrics
+    port: 9090
+    protocol: TCP
