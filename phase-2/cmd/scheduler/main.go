@@ -434,6 +434,9 @@ func buildZeroMQEnvVars(graphName, taskName string, globalZMQ, taskZMQ map[strin
 		corev1.EnvVar{Name: "ZMQ_SERVICE_NAME", Value: serviceName},
 		corev1.EnvVar{Name: "ZMQ_NAMESPACE", Value: namespace},
 		corev1.EnvVar{Name: "ZMQ_REPLICA_INDEX", Value: fmt.Sprintf("%d", replicaIndex)},
+		// High throughput configuration for 100 MB/s
+		corev1.EnvVar{Name: "TARGET_DATA_RATE_MBPS", Value: "100"},
+		corev1.EnvVar{Name: "RATE", Value: "100"},
 	)
 
 	// Publish topics as comma-separated

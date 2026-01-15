@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 import os
+import sys
 import time
 import zmq
 import json
+
+# Use line buffering for real-time logging
+if sys.stdout.isatty():
+    sys.stdout.reconfigure(line_buffering=True)
+if sys.stderr.isatty():
+    sys.stderr.reconfigure(line_buffering=True)
 
 # Get configuration from environment
 graph_name = os.getenv("ZMQ_GRAPH_NAME", "test")
@@ -21,6 +28,13 @@ print(f"[{task_name}] Publish topics: {publish_topics}")
 # Create ZeroMQ context and socket
 context = zmq.Context()
 socket = context.socket(getattr(zmq, pattern))
+
+# Configure for high throughput - don't block on send
+# Set high water mark to unlimited (0) or very high to prevent blocking
+socket.setsockopt(zmq.SNDHWM, 0)  # 0 = unlimited send queue
+socket.setsockopt(zmq.SNDBUF, 10 * 1024 * 1024)  # 10MB send buffer
+if pattern == "PUB":
+    socket.setsockopt(zmq.XPUB_VERBOSE, 1)  # Enable verbose mode for PUB
 
 # Build address
 if transport == "tcp":
@@ -52,39 +66,68 @@ if pattern == "PUB":
 # Publish data continuously
 counter = 0
 rate = int(os.getenv("RATE", "100"))  # messages per second target
+target_data_rate_mbps = float(os.getenv("TARGET_DATA_RATE_MBPS", "100"))  # Target data rate in MB/s
+message_size_bytes = int(os.getenv("MESSAGE_SIZE_BYTES", str(int(target_data_rate_mbps * 1024 * 1024 / rate))))  # Calculate message size to achieve target rate
 
 print(f"[{task_name}] Starting to publish data at ~{rate} msg/s")
+print(f"[{task_name}] Target data rate: {target_data_rate_mbps} MB/s")
+print(f"[{task_name}] Message size: {message_size_bytes} bytes (~{message_size_bytes/1024:.2f} KB)")
+
+# Pre-generate padding data to reach target message size
+def create_message_with_size(counter_val, target_size):
+    """Create a message that is approximately target_size bytes"""
+    base_message = {
+        "task": task_name,
+        "counter": counter_val,
+        "timestamp": time.time(),
+        "data": f"Sample data from {task_name} - message {counter_val}"
+    }
+    base_json = json.dumps(base_message)
+    base_size = len(base_json.encode())
+    
+    # Add padding to reach target size
+    if target_size > base_size:
+        padding_size = target_size - base_size - 50  # Leave some margin for JSON overhead
+        padding = "x" * max(0, padding_size)
+        base_message["padding"] = padding
+    
+    return json.dumps(base_message)
 
 try:
     while True:
         for topic in publish_topics:
             if topic.strip():
-                message = {
-                    "task": task_name,
-                    "counter": counter,
-                    "timestamp": time.time(),
-                    "data": f"Sample data from {task_name} - message {counter}"
-                }
+                message_json = create_message_with_size(counter, message_size_bytes)
+                message_bytes = message_json.encode()
                 # PUB pattern: send topic first, then message
-                socket.send_multipart([topic.encode(), json.dumps(message).encode()])
+                socket.send_multipart([topic.encode(), message_bytes])
                 counter += 1
-                print(f"[{task_name}] Published to {topic}: message {counter}")
+                if counter % 100 == 0:
+                    print(f"[{task_name}] Published to {topic}: message {counter} ({len(message_bytes)} bytes)")
         
         # If no topics specified, use default
         if not publish_topics or not any(t.strip() for t in publish_topics):
-            message = {
-                "task": task_name,
-                "counter": counter,
-                "timestamp": time.time(),
-                "data": f"Sample data from {task_name} - message {counter}"
-            }
-            socket.send(json.dumps(message).encode())
+            message_json = create_message_with_size(counter, message_size_bytes)
+            message_bytes = message_json.encode()
+            socket.send(message_bytes)
             counter += 1
-            if counter % 10 == 0:
-                print(f"[{task_name}] Published message {counter}")
+            if counter % 100 == 0:
+                print(f"[{task_name}] Published message {counter} ({len(message_bytes)} bytes)")
         
-        # Rate limiting
-        time.sleep(1.0 / rate if rate > 0 else 1.0)
+        # Rate limiting - for 100 MB/s target, we want 100 msg/s
+        # With 1MB messages, that's 100 MB/s
+        # Calculate sleep to achieve target rate, but allow faster if processing is slow
+        if rate > 0:
+            # Target: 1/rate seconds per message
+            # But account for processing time - if we're behind, don't sleep
+            target_interval = 1.0 / rate
+            # Use very small sleep to allow maximum throughput
+            # The HWM settings should prevent blocking
+            sleep_time = max(0.0, target_interval - 0.0001)  # Minimal sleep
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        else:
+            time.sleep(0.0001)  # Minimal sleep
         
 except KeyboardInterrupt:
     print(f"\n[{task_name}] Shutting down...")

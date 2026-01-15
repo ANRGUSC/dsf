@@ -1,0 +1,44 @@
+apiVersion: workflow.example.com/v1
+kind: DAG
+metadata:
+  name: simple-test
+spec:
+  steps:
+    - name: step1
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'Step 1 completed'; sleep 5; exit 0"]
+      dependencies: []
+      dataSize: "10MB"
+      runtime: 5
+      cpu: "100m"
+      memory: "128Mi"
+      constraints:
+        nodeNames:
+          - anrg-2
+          - anrg-3
+          - anrg-7
+      retryPolicy:
+        maxRetries: 1
+        backoff: "exponential"
+    - name: step2
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'Step 2 completed'; sleep 5; exit 0"]
+      dependencies: ["step1"]
+      dataSize: "10MB"
+      runtime: 5
+      cpu: "100m"
+      memory: "128Mi"
+      constraints:
+        nodeNames:
+          - anrg-2
+          - anrg-4
+          - anrg-5
+          - anrg-6
+          - anrg-9
+      retryPolicy:
+        maxRetries: 1
+        backoff: "exponential"
+  schedulerName: dag-scheduler
+  namespace: default

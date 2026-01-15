@@ -14,33 +14,18 @@ spec:
     metadata:
       labels:
         app: network-monitor
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/network-monitor: unconfined
     spec:
       serviceAccountName: network-monitor
       hostNetwork: true
       hostPID: true
       containers:
       - name: network-monitor
-        image: mohammadalikh/network-monitor:latest
+        image: mohammadalikh/network-monitor:rtt
         imagePullPolicy: Always
-        securityContext:
-          privileged: true
-          capabilities:
-            add:
-              - SYS_ADMIN
-              - NET_ADMIN
-              - BPF
         volumeMounts:
-        # Mount kernel headers
-        - name: kernel-headers
-          mountPath: /usr/src
-          readOnly: true
-        # Mount kernel debug info
-        - name: kernel-debug
-          mountPath: /sys/kernel/debug
-        # Mount BPF filesystem
-        - name: bpf-maps
-          mountPath: /sys/fs/bpf
-        # Shared volume for metrics (optional, for local testing)
+        # Mount /var/run for metrics output
         - name: metrics-volume
           mountPath: /var/run
         env:
@@ -49,7 +34,9 @@ spec:
             fieldRef:
               fieldPath: spec.nodeName
         args:
-        - "5"  # Update interval in seconds
+        - "-i"
+        - "1"  # Update interval in seconds
+        - "-o"
         - "/var/run/network_metrics.prom"  # Metrics output file
         resources:
           requests:
@@ -59,21 +46,6 @@ spec:
             memory: "256Mi"
             cpu: "200m"
       volumes:
-      # Kernel headers for eBPF compilation
-      - name: kernel-headers
-        hostPath:
-          path: /usr/src
-          type: Directory
-      # Kernel debug filesystem
-      - name: kernel-debug
-        hostPath:
-          path: /sys/kernel/debug
-          type: Directory
-      # BPF filesystem
-      - name: bpf-maps
-        hostPath:
-          path: /sys/fs/bpf
-          type: DirectoryOrCreate
       # Metrics output directory
       - name: metrics-volume
         hostPath:

@@ -61,6 +61,14 @@ spec:
                           type: object
                         limits:
                           type: object
+                    constraints:
+                      type: object
+                      properties:
+                        nodeNames:
+                          type: array
+                          items:
+                            type: string
+                          description: "List of allowed node names for this step"
                     retryPolicy:
                       type: object
                       properties:

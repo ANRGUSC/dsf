@@ -5,24 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
-	"time"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	metricsv1beta1 "k8s.io/metrics/pkg/client/clientset/versioned"
-
-	// Add these for CRD support
-
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 )
 
 // DAG types
@@ -72,7 +67,6 @@ type StepStatus struct {
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
 	var kubeconfig string
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "optional path to kubeconfig")
 	flag.Parse()
@@ -102,25 +96,6 @@ func main() {
 
 	// Watch for DAG resources
 	go watchDAGs(dynamicClient, client, cfg)
-
-	// Watch for unscheduled Pods with our schedulerName
-	watcher := cache.NewListWatchFromClient(
-		client.CoreV1().RESTClient(),
-		"pods",
-		corev1.NamespaceAll,
-		fields.ParseSelectorOrDie("spec.schedulerName=random-scheduler,status.phase=Pending"),
-	)
-	_, controller := cache.NewInformer(
-		watcher,
-		&corev1.Pod{},
-		0,
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: func(obj interface{}) {
-				pod := obj.(*corev1.Pod)
-				scheduleRandom(client, pod, cfg)
-			},
-		},
-	)
 
 	// Watch for completed DAG pods to trigger next steps
 	dagPodWatcher := cache.NewListWatchFromClient(
@@ -155,12 +130,11 @@ func main() {
 	stop := make(chan struct{})
 	defer close(stop)
 
-	// Start both controllers
-	go dagController.Run(stop)
-	controller.Run(stop)
+	// Start the DAG completion controller
+	dagController.Run(stop)
 }
 
-// Watch for DAG resources and create pods
+// Watch for DAG resources
 func watchDAGs(dynamicClient dynamic.Interface, client *kubernetes.Clientset, cfg *rest.Config) {
 	// Define the DAG resource
 	dagGVR := schema.GroupVersionResource{
@@ -216,7 +190,6 @@ func processDAGFromUnstructured(client *kubernetes.Clientset, obj *unstructured.
 		dependencies, _, _ := unstructured.NestedStringSlice(step, "dependencies")
 
 		log.Printf("Checking step %s with dependencies: %v", stepName, dependencies)
-
 		if isStepReadyUnstructured(stepName, dependencies, pods.Items) {
 			log.Printf("Step %s is ready, creating pod", stepName)
 			createStepPodFromUnstructured(client, obj, step, namespace)
@@ -252,14 +225,17 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 	args, _, _ := unstructured.NestedStringSlice(step, "args")
 	dependencies, _, _ := unstructured.NestedStringSlice(step, "dependencies")
 	dataSize, _, _ := unstructured.NestedString(step, "dataSize")
+
+	// Debug: log step keys
+	log.Printf("Step %s keys: %v", stepName, getMapKeys(step))
 	schedulerName, _, _ := unstructured.NestedString(obj.Object, "spec", "schedulerName")
 	if schedulerName == "" {
-		schedulerName = "random-scheduler"
+		schedulerName = "dag-scheduler" // Use the scheduler plugin from phase-4
 	}
 
 	podName := fmt.Sprintf("%s-%s", obj.GetName(), stepName)
 
-	// Get dependency node assignments and check if all are on same node
+	// Get dependency node assignments from actual pods
 	depNodes := getDependencyNodes(client, obj.GetName(), dependencies, namespace)
 	useSharedMemory, sharedNode := allDepsOnSameNode(depNodes)
 
@@ -425,6 +401,21 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 		})
 	}
 
+	// Get node constraints from step spec using unstructured helpers
+	annotations := make(map[string]string)
+	log.Printf("DEBUG: About to read constraints for step %s", stepName)
+	nodeNames, found, err := unstructured.NestedStringSlice(step, "constraints", "nodeNames")
+	log.Printf("DEBUG: Constraints read result for step %s: found=%v, err=%v, nodeNames=%v", stepName, found, err, nodeNames)
+	if err != nil {
+		log.Printf("Error reading constraints for step %s: %v", stepName, err)
+	} else if found && len(nodeNames) > 0 {
+		// Add annotation for dag-scheduler plugin
+		annotations["dag.example.com/allowed-nodes"] = strings.Join(nodeNames, ",")
+		log.Printf("Added node constraints for step %s: %v", stepName, nodeNames)
+	} else {
+		log.Printf("No constraints found for step %s (found=%v, len=%d)", stepName, found, len(nodeNames))
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -433,6 +424,7 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 				"dag-name": obj.GetName(),
 				"dag-step": stepName,
 			},
+			Annotations: annotations,
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: "workflow.example.com/v1",
 				Kind:       "DAG",
@@ -448,8 +440,15 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 		},
 	}
 
-	// Add node affinity if using shared memory
-	if useSharedMemory && sharedNode != "" {
+	// Add node affinity based on constraints (using Kubernetes built-in node affinity)
+	constraintsAnnotation := annotations["dag.example.com/allowed-nodes"]
+	if constraintsAnnotation != "" {
+		allowedNodesList := strings.Split(constraintsAnnotation, ",")
+		// Trim spaces
+		for i := range allowedNodesList {
+			allowedNodesList[i] = strings.TrimSpace(allowedNodesList[i])
+		}
+		// Use node affinity to restrict to allowed nodes
 		pod.Spec.Affinity = &corev1.Affinity{
 			NodeAffinity: &corev1.NodeAffinity{
 				RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
@@ -459,7 +458,7 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 								{
 									Key:      "kubernetes.io/hostname",
 									Operator: corev1.NodeSelectorOpIn,
-									Values:   []string{sharedNode},
+									Values:   allowedNodesList,
 								},
 							},
 						},
@@ -467,20 +466,25 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 				},
 			},
 		}
+		log.Printf("Set node affinity for step %s to allowed nodes: %v", stepName, allowedNodesList)
 	}
 
-	_, err := client.CoreV1().Pods(namespace).Create(context.Background(), pod, metav1.CreateOptions{})
+	_, err = client.CoreV1().Pods(namespace).Create(context.Background(), pod, metav1.CreateOptions{})
 	if err != nil {
-		log.Printf("Error creating pod for step %s: %v", stepName, err)
+		if strings.Contains(err.Error(), "already exists") {
+			log.Printf("Pod %s already exists, skipping creation", podName)
+		} else {
+			log.Printf("Error creating pod for step %s: %v", stepName, err)
+		}
 		return
 	}
 
 	if useSharedMemory {
-		log.Printf("Created pod for step %s in DAG %s with shared memory (node: %s)", stepName, obj.GetName(), sharedNode)
+		log.Printf("Created pod for step %s in DAG %s with shared memory (node: %s) - will be scheduled by dag-scheduler plugin", stepName, obj.GetName(), sharedNode)
 	} else if needsTCPServer {
-		log.Printf("Created pod for step %s in DAG %s with TCP sidecar", stepName, obj.GetName())
+		log.Printf("Created pod for step %s in DAG %s with TCP sidecar - will be scheduled by dag-scheduler plugin", stepName, obj.GetName())
 	} else {
-		log.Printf("Created pod for step %s in DAG %s", stepName, obj.GetName())
+		log.Printf("Created pod for step %s in DAG %s - will be scheduled by dag-scheduler plugin", stepName, obj.GetName())
 	}
 
 	// Create Service for this pod only if TCP server is needed
@@ -489,7 +493,7 @@ func createStepPodFromUnstructured(client *kubernetes.Clientset, obj *unstructur
 	}
 }
 
-// Get dependency node assignments
+// Get dependency node assignments from actual pods
 func getDependencyNodes(client *kubernetes.Clientset, dagName string, dependencies []string, namespace string) map[string]string {
 	depNodes := make(map[string]string)
 
@@ -642,24 +646,6 @@ func createServiceForStep(client *kubernetes.Clientset, dagName, stepName, names
 	}
 }
 
-// Check if a step is ready to run (dependencies completed)
-func isStepReady(step DAGStep, pods []corev1.Pod) bool {
-	// Check if pod already exists
-	for _, pod := range pods {
-		if pod.Labels["dag-step"] == step.Name {
-			return false // Already exists
-		}
-	}
-
-	// Check dependencies
-	for _, dep := range step.Dependencies {
-		if !isDependencyCompleted(dep, pods) {
-			return false
-		}
-	}
-	return true
-}
-
 // Check if the main container (non-sidecar) of a pod has completed
 func isMainContainerCompleted(pod *corev1.Pod) bool {
 	for _, containerStatus := range pod.Status.ContainerStatuses {
@@ -695,148 +681,6 @@ func isDependencyCompleted(depName string, pods []corev1.Pod) bool {
 	return false
 }
 
-// Create a pod for a DAG step
-func createStepPod(client *kubernetes.Clientset, dag *DAG, step DAGStep) {
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-%s", dag.Name, step.Name),
-			Namespace: dag.Spec.Namespace,
-			Labels: map[string]string{
-				"dag-name": dag.Name,
-				"dag-step": step.Name,
-			},
-		},
-		Spec: corev1.PodSpec{
-			SchedulerName: dag.Spec.SchedulerName,
-			Containers: []corev1.Container{
-				{
-					Name:      step.Name,
-					Image:     step.Image,
-					Command:   step.Command,
-					Args:      step.Args,
-					Resources: *step.Resources,
-				},
-			},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
-	}
-
-	_, err := client.CoreV1().Pods(dag.Spec.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
-	if err != nil {
-		log.Printf("Error creating pod for step %s: %v", step.Name, err)
-	} else {
-		log.Printf("Created pod for step %s in DAG %s", step.Name, dag.Name)
-	}
-}
-
-// scheduleRandom picks a node at random and binds the pod
-func scheduleRandom(client *kubernetes.Clientset, pod *corev1.Pod, cfg *rest.Config) {
-	// List all Ready nodes
-	nodes, err := client.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
-		FieldSelector: "spec.unschedulable!=true",
-	})
-	if err != nil {
-		log.Printf("Error listing nodes: %v", err)
-		return
-	}
-	if len(nodes.Items) == 0 {
-		log.Printf("No eligible nodes found for scheduling")
-		return
-	}
-
-	// --- Use the Metrics Server to get CPU and Memory usage in percent for each node ---
-	metricsClient, err := metricsv1beta1.NewForConfig(cfg)
-	if err != nil {
-		log.Printf("Error creating metrics client: %v", err)
-		return
-	}
-
-	nodeMetricsList, err := metricsClient.MetricsV1beta1().NodeMetricses().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		log.Printf("Error fetching node metrics: %v", err)
-		return
-	}
-
-	// Add this after line 94 to debug:
-	log.Printf("Found %d nodes total", len(nodes.Items))
-	log.Printf("Found %d node metrics", len(nodeMetricsList.Items))
-
-	// List all node names from metrics
-	for _, metric := range nodeMetricsList.Items {
-		log.Printf("Metrics available for node: %s", metric.Name)
-	}
-
-	// List all node names from nodes list
-	for _, node := range nodes.Items {
-		log.Printf("Node in cluster: %s", node.Name)
-	}
-
-	// Map for quick lookup by node name
-	nodeUsage := make(map[string]map[string]string)
-	nodeMetricsMap := make(map[string]metav1.Time)
-	cpuPercentage := make(map[string]float64)
-	memPercentage := make(map[string]float64)
-
-	for _, node := range nodes.Items {
-		nodeUsage[node.Name] = make(map[string]string)
-		allocatableCPU := node.Status.Allocatable.Cpu()
-		allocatableMem := node.Status.Allocatable.Memory()
-
-		for _, metric := range nodeMetricsList.Items {
-			if metric.Name == node.Name {
-				cpuQuantity := metric.Usage.Cpu()    // cores as resource.Quantity
-				memQuantity := metric.Usage.Memory() // bytes as resource.Quantity
-
-				// Compute percent usage
-				cpuPercent := float64(cpuQuantity.MilliValue()) / float64(allocatableCPU.MilliValue()) * 100
-				memPercent := float64(memQuantity.Value()) / float64(allocatableMem.Value()) * 100
-
-				nodeUsage[node.Name]["cpu_percent"] = fmt.Sprintf("%.2f", cpuPercent)
-				nodeUsage[node.Name]["memory_percent"] = fmt.Sprintf("%.2f", memPercent)
-				nodeUsage[node.Name]["cpu"] = allocatableCPU.String()
-				nodeUsage[node.Name]["memory"] = allocatableMem.String()
-				cpuPercentage[node.Name] = cpuPercent
-				memPercentage[node.Name] = memPercent
-				nodeMetricsMap[node.Name] = metric.Timestamp
-			}
-		}
-	}
-
-	// Pretty-print node info with proper indentation and spacing
-	log.Printf("Available nodes and their CPU/memory allocatable and percent usage:\n")
-	for _, node := range nodes.Items {
-		usage := nodeUsage[node.Name]
-		log.Printf("  Node: %s\n    CPU:    %s (Used: %s%%)\n    Memory: %s (Used: %s%%)\n",
-			node.Name,
-			usage["cpu"], usage["cpu_percent"],
-			usage["memory"], usage["memory_percent"],
-		)
-	}
-
-	// Pick a random node
-	choice := nodes.Items[rand.Intn(len(nodes.Items))].Name
-
-	binding := &corev1.Binding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      pod.Name,
-			Namespace: pod.Namespace,
-		},
-		Target: corev1.ObjectReference{
-			APIVersion: "v1",
-			Kind:       "Node",
-			Name:       choice,
-		},
-	}
-
-	// Create the binding subresource to assign node
-	err = client.CoreV1().Pods(pod.Namespace).Bind(context.Background(), binding, metav1.CreateOptions{})
-	if err != nil {
-		log.Printf("Error binding pod %s/%s to node %s: %v", pod.Namespace, pod.Name, choice, err)
-		return
-	}
-	log.Printf("Successfully bound pod %s/%s to node %s (CPU: %s%%, Mem: %s%%)", pod.Namespace, pod.Name, choice, nodeUsage[choice]["cpu_percent"], nodeUsage[choice]["memory_percent"])
-}
-
 // Process DAG completion and trigger next steps
 func processDAGCompletion(client *kubernetes.Clientset, completedPod *corev1.Pod, cfg *rest.Config) {
 	dagName := completedPod.Labels["dag-name"]
@@ -867,4 +711,13 @@ func processDAGCompletion(client *kubernetes.Clientset, completedPod *corev1.Pod
 
 	// Process the DAG to create next steps
 	processDAGFromUnstructured(client, dag, cfg)
+}
+
+// Helper to get map keys for debugging
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
