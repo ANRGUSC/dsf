@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dag-scheduler-config
+  namespace: kube-system
+data:
+  scheduler-config.yml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    leaderElection:
+      leaderElect: false
+    profiles:
+      - schedulerName: dag-scheduler
+        plugins:
+          filter:
+            enabled:
+              - name: DAGConstraints
+          score:
+            enabled:
+              - name: DAGConstraints

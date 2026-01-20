@@ -1,0 +1,100 @@
+apiVersion: workflow.example.com/v1
+kind: DAG
+metadata:
+  name: dag2-fork
+spec:
+  # Fork pattern: one source splits into three parallel branches
+  #
+  #        +-> task-b (15s) -+
+  #        |                 |
+  # task-a +-> task-c (20s) -+-> task-f
+  #        |                 |
+  #        +-> task-d (10s) -+-> task-e (15s)
+  #
+  steps:
+    - name: task-a
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG2 task-a - Initial processing'; sleep 8"]
+      dependencies: []
+      dataSize: "200MB"
+      runtime: 8
+      constraints:
+        nodeNames:
+          - anrg-2
+          - anrg-3
+          - anrg-4
+      cpu: "400m"
+      memory: "200Mi"
+    - name: task-b
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG2 task-b - Branch 1 processing'; sleep 15"]
+      dependencies: ["task-a"]
+      dataSize: "180MB"
+      runtime: 15
+      constraints:
+        nodeNames:
+          - anrg-5
+          - anrg-6
+          - anrg-7
+      cpu: "600m"
+      memory: "300Mi"
+    - name: task-c
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG2 task-c - Branch 2 processing'; sleep 20"]
+      dependencies: ["task-a"]
+      dataSize: "220MB"
+      runtime: 20
+      constraints:
+        nodeNames:
+          - anrg-4
+          - anrg-5
+          - anrg-8
+      cpu: "800m"
+      memory: "400Mi"
+    - name: task-d
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG2 task-d - Branch 3 processing'; sleep 10"]
+      dependencies: ["task-a"]
+      dataSize: "150MB"
+      runtime: 10
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-6
+          - anrg-9
+      cpu: "500m"
+      memory: "250Mi"
+    - name: task-e
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG2 task-e - Sub-branch processing'; sleep 15"]
+      dependencies: ["task-d"]
+      dataSize: "280MB"
+      runtime: 15
+      constraints:
+        nodeNames:
+          - anrg-7
+          - anrg-8
+          - anrg-9
+      cpu: "700m"
+      memory: "350Mi"
+    - name: task-f
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG2 task-f - Final aggregation'; sleep 12"]
+      dependencies: ["task-b", "task-c", "task-e"]
+      dataSize: "400MB"
+      runtime: 12
+      constraints:
+        nodeNames:
+          - anrg-2
+          - anrg-4
+          - anrg-7
+      cpu: "1200m"
+      memory: "600Mi"
+  schedulerName: dag-scheduler
+  namespace: default

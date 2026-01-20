@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: random-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: random-controller
+  template:
+    metadata:
+      labels:
+        app: random-controller
+    spec:
+      serviceAccountName: random-controller
+      containers:
+        - name: random-controller
+          image: mohammadalikh/random-controller:latest
+          args:
+            - "--kubeconfig="
+          imagePullPolicy: Always

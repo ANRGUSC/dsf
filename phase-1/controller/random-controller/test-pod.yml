@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rand-test-1
+spec:
+  schedulerName: random-controller
+  containers:
+    - name: sleeper
+      image: busybox
+      command: ["sleep","3600"]

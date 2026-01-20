@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dag-scheduler
+  namespace: kube-system
+  labels:
+    app: dag-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dag-scheduler
+  template:
+    metadata:
+      labels:
+        app: dag-scheduler
+    spec:
+      serviceAccountName: dag-scheduler
+      containers:
+        - name: dag-scheduler
+          image: mohammadalikh/dag-scheduler:latest
+          imagePullPolicy: Always
+          args:
+            - --config=/etc/kubernetes/scheduler-config.yml
+            - --v=4
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kubernetes
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: dag-scheduler-config

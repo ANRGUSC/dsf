@@ -1,0 +1,67 @@
+apiVersion: workflow.example.com/v1
+kind: DAG
+metadata:
+  name: dag1-diamond
+spec:
+  steps:
+    - name: step1
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG1 Step 1 running'; sleep 10"]
+      dependencies: []
+      dataSize: "250MB"
+      runtime: 10
+      constraints:
+        nodeNames:
+          - anrg-2
+          - anrg-3
+          - anrg-7
+      cpu: "500m"
+      memory: "256Mi"
+    - name: step2
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG1 Step 2 running'; sleep 10"]
+      dependencies: ["step1"]
+      dataSize: "375MB"
+      runtime: 10
+      constraints:
+        nodeNames:
+          - anrg-2
+          - anrg-4
+          - anrg-5
+          - anrg-6
+          - anrg-9
+      cpu: "1000m"
+      memory: "512Mi"
+    - name: step3
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG1 Step 3 running'; sleep 10"]
+      dependencies: ["step1"]
+      dataSize: "300MB"
+      runtime: 10
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-4
+          - anrg-5
+          - anrg-6
+      cpu: "750m"
+      memory: "384Mi"
+    - name: step4
+      image: busybox
+      command: ["sh", "-c"]
+      args: ["echo 'DAG1 Step 4 running'; sleep 10"]
+      dependencies: ["step2", "step3"]
+      dataSize: "500MB"
+      runtime: 10
+      constraints:
+        nodeNames:
+          - anrg-7
+          - anrg-8
+          - anrg-9
+      cpu: "1500m"
+      memory: "768Mi"
+  schedulerName: dag-scheduler
+  namespace: default
