@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pathload-sender
+spec:
+  selector:
+    matchLabels:
+      app: pathload-sender
+  template:
+    metadata:
+      labels:
+        app: pathload-sender
+    spec:
+      hostNetwork: true
+      containers:
+      - name: pathload-d
+        image: pathload-d:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/usr/local/bin/entrypoint.sh"]
+        args: ["-s"]
+        env:
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        

@@ -1,0 +1,22 @@
+---
+- name: Deploy Sample Program to All Nodes
+  hosts: agents
+  become: true
+  tasks:
+    - name: Create target directory
+      file:
+        path: /opt/pathload
+        state: directory
+        mode: '0755'
+
+    - name: Copy program files
+      copy:
+        src: pathload-d.tar
+        dest: /opt/pathload/pathload-d.tar
+        mode: '0755'
+
+    - name: load image into containerd
+      shell: |
+        sudo k3s ctr images import /opt/pathload/pathload-d.tar
+      args:
+        executable: /bin/bash
