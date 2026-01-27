@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pathload-sender
+  namespace: default
+  labels:
+    app: pathload-sender
+spec:
+  selector:
+    matchLabels:
+      app: pathload-sender
+  template:
+    metadata:
+      labels:
+        app: pathload-sender
+    spec:
+      hostNetwork: true
+      serviceAccountName: pathload-orchestrator
+      containers:
+      - name: sender
+        image: mohammadalikh/pathload-sender:multithreaded
+        imagePullPolicy: Always
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /var/lib/rancher/k3s
+          readOnly: true
+      volumes:
+      - name: kubeconfig
+        hostPath:
+          path: /var/lib/rancher/k3s
+          type: DirectoryOrCreate
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      - effect: NoExecute
+        operator: Exists
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pathload-receiver
+  namespace: default
+  labels:
+    app: pathload-receiver
+spec:
+  selector:
+    matchLabels:
+      app: pathload-receiver
+  template:
+    metadata:
+      labels:
+        app: pathload-receiver
+    spec:
+      hostNetwork: true
+      serviceAccountName: pathload-orchestrator
+      containers:
+      - name: receiver
+        image: mohammadalikh/pathload-receiver:multithreaded
+        imagePullPolicy: Always
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /var/lib/rancher/k3s
+          readOnly: true
+      volumes:
+      - name: kubeconfig
+        hostPath:
+          path: /var/lib/rancher/k3s
+          type: DirectoryOrCreate
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      - effect: NoExecute
+        operator: Exists

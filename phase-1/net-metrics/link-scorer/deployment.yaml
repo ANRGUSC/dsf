@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: link-scorer
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: link-scorer
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: link-scorer
+  template:
+    metadata:
+      labels:
+        app: link-scorer
+    spec:
+      serviceAccountName: link-scorer
+      containers:
+      - name: link-scorer
+        image: link-scorer:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: PROM_URL
+          value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
+        - name: WINDOW
+          value: "30s"
+        - name: CAPACITY_BPS
+          value: "1000000000"
+        - name: DROP_REF_BPS
+          value: "10000000"
+        - name: TOPK
+          value: "20"
+        - name: OUTPUT
+          value: "json"
+        # Optional: if Prometheus requires auth
+        # - name: PROM_TOKEN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: prometheus-token
+        #       key: token
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        # Uncomment to run as a cron job instead:
+        # command: ["/bin/sh", "-c"]
+        # args:
+        #   - |
+        #     while true; do
+        #       /app/link-scorer | tee -a /var/log/link-scores.jsonl
+        #       sleep 60
+        #     done
+---
+# Optional: Service for exposing metrics endpoint (if you add one)
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: link-scorer
+#   namespace: default
+# spec:
+#   selector:
+#     app: link-scorer
+#   ports:
+#   - port: 8080
+#     targetPort: 8080
