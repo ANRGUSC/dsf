@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpop-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cpop-controller
+  template:
+    metadata:
+      labels:
+        app: cpop-controller
+    spec:
+      serviceAccountName: cpop-controller
+      containers:
+        - name: cpop-controller
+          image: mohammadalikh/cpop-controller:latest
+          args:
+            - "--kubeconfig="
+          imagePullPolicy: Always
