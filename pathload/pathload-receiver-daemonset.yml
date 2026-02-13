@@ -19,13 +19,9 @@ spec:
         command: ["/usr/local/bin/entrypoint.sh"]
         args: ["-r"]
         env:
-        - name: NODE_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.hostIP
+        - name: IP
+          value: "anrg-1"
         - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: ALL_IPS
-          value: "10.25.100.215,10.25.229.253,10.25.129.141,192.168.0.105"

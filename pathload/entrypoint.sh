@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -e
-echo "Host IP: $NODE_IP"
 echo "Node Name: $NODE_NAME"
 
 if [[ "$1" == "-s" ]]; then
@@ -8,7 +7,7 @@ if [[ "$1" == "-s" ]]; then
         mkdir -p /pathload_results
         ./pathload_snd >> /pathload_results/snd.txt &
         wait
-        echo "=== Results from $NODE_NAME ($NODE_IP) ==="
+        echo "=== Results from $NODE_NAME ==="
         cat /pathload_results/snd.txt
     done
 elif [[ "$1" == "-r" ]]; then
