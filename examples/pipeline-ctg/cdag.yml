@@ -1,0 +1,52 @@
+apiVersion: dsf.io/v1
+kind: CDAG
+metadata:
+  name: pipeline-ctg
+  namespace: default
+spec:
+  scheduler: heft
+  restartPolicy: Always
+  tasks:
+    # Producer: generates a stream of messages and publishes them.
+    - name: producer
+      image: 192.168.1.163:5000/pipeline-ctg-producer:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: []
+      resources:
+        cpu: "200m"
+        memory: "128Mi"
+      constraints:
+        nodeNames:
+          - anrg-1
+          - anrg-3
+
+    # Processor: subscribes to producer, processes each message, publishes results.
+    - name: processor
+      image: 192.168.1.163:5000/pipeline-ctg-processor:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: ["producer"]
+      resources:
+        cpu: "300m"
+        memory: "128Mi"
+      constraints:
+        nodeNames:
+          - anrg-4
+          - anrg-6
+          - anrg-8
+
+    # Sink: subscribes to processor and logs received results.
+    - name: sink
+      image: 192.168.1.163:5000/pipeline-ctg-sink:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: ["processor"]
+      resources:
+        cpu: "100m"
+        memory: "64Mi"
+      constraints:
+        nodeNames:
+          - anrg-5
+          - anrg-7
+          - anrg-9

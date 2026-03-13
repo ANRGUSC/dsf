@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cdag-controller
+  namespace: dsf-system
+  labels:
+    app: cdag-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cdag-controller
+  template:
+    metadata:
+      labels:
+        app: cdag-controller
+    spec:
+      serviceAccountName: cdag-controller
+      tolerations:
+        - key: node.kubernetes.io/unschedulable
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        kubernetes.io/hostname: anrg-2
+      containers:
+        - name: cdag-controller
+          image: 192.168.1.163:5000/cdag-controller:latest
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

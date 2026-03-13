@@ -1,0 +1,149 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: odags.dsf.io
+spec:
+  group: dsf.io
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [tasks]
+              properties:
+                scheduler:
+                  type: string
+                  default: heft
+                  description: >
+                    Scheduler to use. Built-ins: heft, cpop, maxmin.
+                    Or a path to a user-defined Python script mounted via ConfigMap.
+                retryPolicy:
+                  type: object
+                  properties:
+                    maxRetries:
+                      type: integer
+                      default: 3
+                      minimum: 0
+                tasks:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [name, image]
+                    properties:
+                      name:
+                        type: string
+                      image:
+                        type: string
+                      command:
+                        type: array
+                        items:
+                          type: string
+                      args:
+                        type: array
+                        items:
+                          type: string
+                      dependencies:
+                        type: array
+                        items:
+                          type: string
+                        default: []
+                      resources:
+                        type: object
+                        properties:
+                          cpu:
+                            type: string
+                          memory:
+                            type: string
+                      dataSize:
+                        type: string
+                        description: Expected output data size, e.g. "100MB". Used by scheduler for communication cost estimation.
+                      runtime:
+                        type: integer
+                        description: Expected runtime in seconds. Used by scheduler for makespan estimation.
+                      env:
+                        type: array
+                        items:
+                          type: object
+                          required: [name]
+                          properties:
+                            name:
+                              type: string
+                            value:
+                              type: string
+                      constraints:
+                        type: object
+                        properties:
+                          nodeNames:
+                            type: array
+                            items:
+                              type: string
+                            description: If set, scheduler will only place this task on one of these nodes.
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Scheduling, Running, Succeeded, Failed, Degraded]
+                tasks:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      phase:
+                        type: string
+                        enum: [Pending, Running, Succeeded, Failed]
+                      node:
+                        type: string
+                      podName:
+                        type: string
+                      startTime:
+                        type: string
+                        format: date-time
+                      completionTime:
+                        type: string
+                        format: date-time
+                      retries:
+                        type: integer
+                      message:
+                        type: string
+                startTime:
+                  type: string
+                  format: date-time
+                completionTime:
+                  type: string
+                  format: date-time
+                makespan:
+                  type: number
+                  description: Actual makespan in seconds (set on completion).
+                message:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Scheduler
+          type: string
+          jsonPath: .spec.scheduler
+        - name: Makespan
+          type: number
+          jsonPath: .status.makespan
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: odags
+    singular: odag
+    kind: ODAG
+    shortNames:
+      - odag

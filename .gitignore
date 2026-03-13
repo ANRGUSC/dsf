@@ -1,2 +1,11 @@
-pathload/*.tar
-pathload/*.tar.gz
+# Compiled binaries
+bin/
+archive/phase-2/cmd/scheduler/scheduler
+
+# Frontend build output and dependencies
+ui/dist/
+ui/node_modules/
+
+# Pathload archives
+archive/pathload/*.tar
+archive/pathload/*.tar.gz

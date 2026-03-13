@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odag-controller
+  namespace: dsf-system
+  labels:
+    app: odag-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: odag-controller
+  template:
+    metadata:
+      labels:
+        app: odag-controller
+    spec:
+      serviceAccountName: odag-controller
+      tolerations:
+        - key: node.kubernetes.io/unschedulable
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        kubernetes.io/hostname: anrg-2
+      containers:
+        - name: odag-controller
+          image: 192.168.1.163:5000/odag-controller:latest
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
