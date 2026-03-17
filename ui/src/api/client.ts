@@ -6,12 +6,15 @@
 export interface TaskStatus {
   name: string
   phase: 'Pending' | 'Running' | 'Succeeded' | 'Failed'
+  state?: string
+  sending?: boolean
   node?: string
   podName?: string
   startTime?: string
   completionTime?: string
   retries?: number
   message?: string
+  dataSize?: string
 }
 
 export interface ODAGSummary {
@@ -26,13 +29,23 @@ export interface ODAGSummary {
   createdAt: string
 }
 
+export interface PredictedTask {
+  name: string
+  node: string
+  estStart: number
+  estEnd: number
+}
+
 export interface ODAGDetail extends ODAGSummary {
   tasks: TaskStatus[]
+  predictedTasks?: PredictedTask[]
   spec: {
     tasks: Array<{
       name: string
       image: string
       dependencies: string[]
+      dataSize?: string
+      runtime?: number
       resources?: { cpu?: string; memory?: string }
       constraints?: { nodeNames?: string[] }
     }>
@@ -93,6 +106,11 @@ export const api = {
 
   getODAGHistory: (namespace: string, name: string): Promise<HistoryEntry[]> =>
     get(`/api/odags/${namespace}/${name}/history`),
+
+  retryODAG: (namespace: string, name: string): Promise<{ status: string }> => {
+    return fetch(`/api/odags/${namespace}/${name}/retry`, { method: 'POST' })
+      .then(res => { if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.json() })
+  },
 
   listCDAGs: (): Promise<CDAGSummary[]> =>
     get('/api/cdags'),

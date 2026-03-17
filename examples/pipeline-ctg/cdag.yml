@@ -4,7 +4,7 @@ metadata:
   name: pipeline-ctg
   namespace: default
 spec:
-  scheduler: heft
+  scheduler: random
   restartPolicy: Always
   tasks:
     # Producer: generates a stream of messages and publishes them.

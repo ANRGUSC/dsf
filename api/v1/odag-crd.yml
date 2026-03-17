@@ -18,9 +18,9 @@ spec:
               properties:
                 scheduler:
                   type: string
-                  default: heft
+                  default: random
                   description: >
-                    Scheduler to use. Built-ins: heft, cpop, maxmin.
+                    Scheduler to use. Built-ins: random.
                     Or a path to a user-defined Python script mounted via ConfigMap.
                 retryPolicy:
                   type: object
@@ -100,6 +100,9 @@ spec:
                       phase:
                         type: string
                         enum: [Pending, Running, Succeeded, Failed]
+                      state:
+                        type: string
+                        description: Granular task state reported by data-agent (Scheduled/Executing/Sending/DataReady/Done/Failed).
                       node:
                         type: string
                       podName:
@@ -114,6 +117,12 @@ spec:
                         type: integer
                       message:
                         type: string
+                      sending:
+                        type: boolean
+                        description: True while the background data transfer thread is active.
+                      dataSize:
+                        type: string
+                        description: Output data size in bytes (parsed from spec.tasks[].dataSize).
                 startTime:
                   type: string
                   format: date-time
@@ -125,6 +134,22 @@ spec:
                   description: Actual makespan in seconds (set on completion).
                 message:
                   type: string
+                predictedTasks:
+                  type: array
+                  description: Per-task predicted schedule computed at deployment time.
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      node:
+                        type: string
+                      estStart:
+                        type: number
+                        description: Estimated start time in seconds from t=0.
+                      estEnd:
+                        type: number
+                        description: Estimated finish time in seconds from t=0.
       subresources:
         status: {}
       additionalPrinterColumns:

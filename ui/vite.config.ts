@@ -12,7 +12,7 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy /api requests to the Go ui-server during local development
-      '/api': 'http://localhost:8080',
+      '/api': 'http://192.168.1.163:30080',
     },
   },
 })

@@ -1,32 +1,29 @@
 """
-TransportRouter: reads DSF_* env vars and instantiates the right transport.
+TransportRouter: reads DSF_TRANSPORT_PATTERN and instantiates the right transport.
 
-Environment variables read:
-    DSF_TRANSPORT_PATTERN   pushpull (default) | pubsub
-    DSF_RECV_PORT           PULL bind port for pushpull (default: 5555)
-    DSF_PUB_PORT            PUB bind port for pubsub   (default: 5555)
-    DSF_PEER_<NAME>         zmq://host:port for peer task <NAME>
-                            (NAME is uppercase, hyphens as underscores)
+    DSF_TRANSPORT_PATTERN   file (ODAG) | pubsub (CDAG) | pushpull (legacy)
 """
 
 import os
 import re
 
-from dsf_sdk.transport.zeromq import ZmqPushPullTransport, ZmqPubSubTransport
 
-_PEER_RE = re.compile(r"^DSF_PEER_([A-Z0-9_]+)$")
-
-
-def build_transport() -> ZmqPushPullTransport | ZmqPubSubTransport:
+def build_transport():
     """Build and return the appropriate transport from environment variables."""
     pattern = os.environ.get("DSF_TRANSPORT_PATTERN", "pushpull").lower()
 
-    # Collect peer endpoints from DSF_PEER_* env vars
+    if pattern == "file":
+        from dsf_sdk.transport.file import FileTransport
+        return FileTransport()
+
+    # ZMQ transports (CDAG pubsub, or legacy pushpull)
+    from dsf_sdk.transport.zeromq import ZmqPushPullTransport, ZmqPubSubTransport
+
+    _PEER_RE = re.compile(r"^DSF_PEER_([A-Z0-9_]+)$")
     peers: dict[str, str] = {}
     for key, value in os.environ.items():
         m = _PEER_RE.match(key)
         if m:
-            # DSF_PEER_BRANCH_A -> "branch-a"
             peer_name = m.group(1).lower().replace("_", "-")
             peers[peer_name] = value
 

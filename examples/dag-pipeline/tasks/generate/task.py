@@ -2,11 +2,9 @@
 """
 DAG pipeline — generate task.
 
-Simulates 10 seconds of computation, then sends a dataset to the
-'transform' task via ZMQ PUSH (DSF SDK send/recv over pushpull transport).
-
-All pods in the pipeline start simultaneously. Downstream tasks block
-on their PULL socket until this task pushes data.
+Simulates 10 seconds of computation, then writes a dataset to the
+output file via the DSF file transport. The odag-controller launches
+transform only after this pod succeeds.
 """
 
 import time
@@ -29,8 +27,8 @@ dataset = {
 print(f"[{task.name}] generated dataset with {dataset['count']} values", flush=True)
 print(f"[{task.name}] sample: {dataset['values'][:5]}", flush=True)
 
-print(f"[{task.name}] sending dataset to 'transform'", flush=True)
-task.send("transform", dataset)
+print(f"[{task.name}] sending dataset downstream", flush=True)
+task.send(dataset)
 
 print(f"[{task.name}] done", flush=True)
 task.close()

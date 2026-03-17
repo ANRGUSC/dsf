@@ -18,9 +18,9 @@ spec:
               properties:
                 scheduler:
                   type: string
-                  default: heft
+                  default: random
                   description: >
-                    Scheduler to use for initial placement. Built-ins: heft, cpop, maxmin.
+                    Scheduler to use for initial placement. Built-ins: random.
                 restartPolicy:
                   type: string
                   default: Always

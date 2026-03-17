@@ -2,7 +2,7 @@
 """
 DAG pipeline — output task.
 
-Waits for the transformed dataset from 'transform' (blocking PULL),
+Reads the transformed dataset written by 'transform' (via file transport),
 prints a summary, and exits. This is the terminal node of the pipeline.
 """
 

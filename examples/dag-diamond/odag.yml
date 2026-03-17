@@ -4,7 +4,7 @@ metadata:
   name: dag-diamond
   namespace: default
 spec:
-  scheduler: heft
+  scheduler: random
   retryPolicy:
     maxRetries: 3
   tasks:

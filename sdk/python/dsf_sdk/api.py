@@ -7,22 +7,31 @@ Usage in task images:
 
     task = DSFTask()
 
-    # One-shot DAG (pushpull):
-    data = task.recv("upstream-task")   # blocks until data arrives
-    result = process(data)
-    task.send("downstream-task", result)
+    # One-shot ODAG (file transport — layer-by-layer execution):
+    data  = task.recv("upstream-task")   # read one upstream's output
+    inputs = task.recv_all()             # read all upstreams at once -> dict
+    task.send(result)                    # routes to all successors automatically
 
-    # Continuous CTG (pubsub):
+    # Continuous CDAG (pubsub transport):
     while True:
-        item = task.recv("upstream-task")   # blocks until next message
+        item = task.recv("upstream-task")
         result = process(item)
-        task.send("downstream-task", result)
+        task.send(result)
 
-The controller injects these environment variables:
-    DSF_TASK_NAME             name of this task
-    DSF_TRANSPORT_PATTERN     pushpull | pubsub
-    DSF_RECV_PORT             PULL bind port (pushpull mode)
-    DSF_PUB_PORT              PUB bind port  (pubsub mode)
+The odag-controller injects (file transport):
+    DSF_TRANSPORT_PATTERN     file
+    DSF_ODAG_NAME             ODAG CR name
+    DSF_TASK_NAME             this task's name
+    DSF_OUTPUT_DIR            where this task writes its output
+    DSF_DEPS                  comma-separated dependency names
+    DSF_SUCCESSORS            comma-separated successor names
+    DSF_NODE_IP               host IP for data-agent state reporting
+    NODE_NAME                 this pod's node (downward API)
+
+The cdag-controller injects (pubsub transport):
+    DSF_TRANSPORT_PATTERN     pubsub
+    DSF_TASK_NAME             this task's name
+    DSF_PUB_PORT              PUB bind port
     DSF_PEER_<NAME>           zmq://host:port for each peer task
 """
 
@@ -45,7 +54,7 @@ class DSFTask:
     Entry point for DSF task communication.
 
     Instantiate once at the start of your task. Reads configuration from
-    environment variables injected by the dag-controller or ctg-controller.
+    environment variables injected by the odag-controller or cdag-controller.
     """
 
     def __init__(self) -> None:
@@ -54,29 +63,35 @@ class DSFTask:
         pattern = os.environ.get("DSF_TRANSPORT_PATTERN", "pushpull")
         print(f"[{self.name}] DSFTask initialized (transport: {pattern})", flush=True)
 
-    def send(self, peer: str, data: Any) -> None:
+    def send(self, data: Any) -> None:
         """
-        Send data to a peer task.
+        Send data to all downstream successors.
 
-        In pushpull mode: PUSH to peer's PULL socket.
-        In pubsub mode:   PUB to all subscribers (peer name used as topic).
+        For file transport (ODAG): routes to each successor automatically
+        based on DSF_SUCCESSORS env vars injected by the controller.
+        Same-node successors receive a local file copy; remote successors
+        receive an HTTP PUT via the data-agent.
+
+        For pubsub transport (CDAG): publishes to all subscribers.
 
         Args:
-            peer: name of the destination task (e.g. "transform", "sink").
             data: JSON-serializable value.
         """
         payload = json.dumps(data).encode()
-        self._transport.send(peer, payload)
+        self._transport.send(payload)
 
     def recv(self, peer: str | None = None) -> Any:
         """
-        Receive data from an upstream task. Blocks until data arrives.
+        Receive data from an upstream task.
 
-        In pushpull mode: PULL (binds locally; peer arg is cosmetic).
-        In pubsub mode:   SUB to peer's PUB socket (peer arg required).
+        For file transport: reads from the local hostPath output file written
+        by the upstream task. Peer defaults to the single dep in DSF_DEPS.
+
+        For pubsub transport: subscribes to peer's PUB socket (peer required).
 
         Args:
-            peer: name of the upstream task (required in pubsub mode).
+            peer: name of the upstream task. Required when there are multiple
+                  upstream dependencies; omit if there is exactly one.
 
         Returns:
             The deserialized value sent by the upstream task.
@@ -84,6 +99,17 @@ class DSFTask:
         payload = self._transport.recv(peer)
         return json.loads(payload)
 
+    def recv_all(self) -> dict[str, Any]:
+        """
+        Receive data from all upstream dependencies at once.
+
+        Returns:
+            A dict mapping dependency name -> deserialized value.
+            Keys match the names in DSF_DEPS / spec.tasks[].dependencies.
+        """
+        raw = self._transport.recv_all()
+        return {k: json.loads(v) for k, v in raw.items()}
+
     def close(self) -> None:
-        """Close all open sockets. Call on shutdown."""
+        """Close all open sockets / file handles. Call on shutdown."""
         self._transport.close()

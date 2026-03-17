@@ -2,8 +2,9 @@
 """
 DAG pipeline — transform task.
 
-Waits for data from 'generate' (blocking PULL), doubles every value
-to simulate 10 seconds of work, then sends the result to 'output'.
+Reads the dataset written by 'generate' (via file transport), doubles
+every value to simulate 10 seconds of work, then writes the result for
+'output' to consume.
 """
 
 import time
@@ -30,8 +31,8 @@ transformed = {
 print(f"[{task.name}] transformed {transformed['count']} values", flush=True)
 print(f"[{task.name}] sample: {transformed['values'][:5]}", flush=True)
 
-print(f"[{task.name}] sending result to 'output'", flush=True)
-task.send("output", transformed)
+print(f"[{task.name}] sending result downstream", flush=True)
+task.send(transformed)
 
 print(f"[{task.name}] done", flush=True)
 task.close()

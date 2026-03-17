@@ -4,7 +4,7 @@ metadata:
   name: dag-pipeline
   namespace: default
 spec:
-  scheduler: heft
+  scheduler: random
   retryPolicy:
     maxRetries: 2
   tasks:

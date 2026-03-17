@@ -43,9 +43,25 @@ const phaseText: Record<string, string> = {
   Failed:    '#f87171',
 }
 
+// Granular state colours (data-agent states)
+const stateText: Record<string, string> = {
+  Scheduled:  '#9ca3af', // gray
+  Executing:  '#fcd34d', // amber
+  Sending:    '#c084fc', // purple
+  DataReady:  '#67e8f9', // cyan
+  Done:       '#4ade80', // green
+  Failed:     '#f87171', // red
+}
+
+// If the data-agent state is Succeeded, treat the node as visually Succeeded
+// even if the pod phase hasn't caught up yet (brief k8s lag after container exit).
+function effectivePhase(phase: string, state?: string) {
+  return state === 'Done' ? 'Succeeded' : phase
+}
 function bg(phase: string)     { return phaseBg[phase]     ?? phaseBg.Pending }
 function border(phase: string) { return phaseBorder[phase] ?? phaseBorder.Pending }
 function txt(phase: string)    { return phaseText[phase]   ?? phaseText.Pending }
+function stateTxt(state: string) { return stateText[state] ?? '#9ca3af' }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,14 +82,28 @@ function runtimeStr(startIso?: string, endIso?: string): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
+function fmtBytes(b?: string): string {
+  if (!b) return ''
+  const n = parseInt(b, 10)
+  if (isNaN(n) || n === 0) return ''
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)} GB`
+  if (n >= 1_000_000)     return `${(n / 1_000_000).toFixed(0)} MB`
+  if (n >= 1_000)         return `${(n / 1_000).toFixed(0)} KB`
+  return `${n} B`
+}
+
 // ─── custom node ─────────────────────────────────────────────────────────────
 
 interface TaskNodeData {
   taskName: string
   phase: string
+  state?: string
+  sending?: boolean
   nodeName?: string
   startTime?: string
   completionTime?: string
+  dataSize?: string
+  specRuntime?: number
   image?: string
   constraints?: string[]
   hasDeps: boolean
@@ -83,9 +113,12 @@ interface TaskNodeData {
 
 function TaskNode({ data }: NodeProps) {
   const d = data as TaskNodeData
-  const phase = d.phase ?? 'Pending'
+  const phase = effectivePhase(d.phase ?? 'Pending', d.state)
+  const state = d.state
   const runtime = runtimeStr(d.startTime, d.completionTime)
   const startDate = fmtDate(d.startTime)
+  const dataSizeFmt = fmtBytes(d.dataSize)
+
 
   return (
     <div
@@ -94,7 +127,7 @@ function TaskNode({ data }: NodeProps) {
         background: bg(phase),
         border: `2px solid ${border(phase)}`,
         borderRadius: 10,
-        minWidth: 160,
+        minWidth: 175,
         padding: '10px 14px',
         color: '#f9fafb',
         boxShadow: `0 0 12px ${border(phase)}44`,
@@ -106,17 +139,44 @@ function TaskNode({ data }: NodeProps) {
       {d.hasDownstream && <Handle type="source" position={Position.Right} style={{ background: border(phase), border: 'none', width: 10, height: 10 }} />}
 
       {/* Main card content */}
-      <div className="font-semibold text-sm text-white mb-1 truncate" style={{ maxWidth: 180 }}>
+      <div className="font-semibold text-sm text-white mb-1 truncate" style={{ maxWidth: 195 }}>
         {d.taskName}
       </div>
-      <div className="text-xs font-medium mb-1" style={{ color: txt(phase) }}>
-        {phase}
+
+      {/* Phase pill + state badge + data size */}
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-1.5">
+          {/* Phase pill */}
+          <span
+            className="text-xs font-medium px-1.5 py-0.5 rounded"
+            style={{ background: border(phase) + '33', color: txt(phase), border: `1px solid ${border(phase)}66` }}
+          >
+            {phase}
+          </span>
+          {/* State badge — always shown */}
+          {state && (
+            <span className="text-xs font-medium" style={{ color: stateTxt(state) }}>
+              · {state}
+            </span>
+          )}
+        </div>
+        {dataSizeFmt && (
+          <div className="text-xs" style={{ color: '#67e8f9', fontVariantNumeric: 'tabular-nums' }}>
+            {dataSizeFmt}
+          </div>
+        )}
       </div>
+
+      {/* Assigned node */}
       {d.nodeName && (
         <div className="text-xs" style={{ color: '#6b7280' }}>
           {d.nodeName}
+          {d.startTime && d.completionTime && (
+            <span style={{ color: '#a78bfa', marginLeft: 6 }}>{runtime}</span>
+          )}
         </div>
       )}
+
       {d.constraints && d.constraints.length > 0 && (
         <div className="text-xs mt-1" style={{ color: '#4b5563' }}>
           {'↦ '}{(d.constraints as string[]).join(', ')}
@@ -129,7 +189,7 @@ function TaskNode({ data }: NodeProps) {
         style={{
           bottom: 'calc(100% + 10px)',
           transform: 'translateX(-50%)',
-          minWidth: 220,
+          minWidth: 240,
           background: '#111827',
           border: `1px solid ${border(phase)}`,
           borderRadius: 8,
@@ -159,21 +219,27 @@ function TaskNode({ data }: NodeProps) {
         <div className="text-xs space-y-1.5">
           <div className="font-semibold text-white text-sm mb-2">{d.taskName}</div>
 
-          <Row label="Phase"   value={phase}         color={txt(phase)} />
+          <Row label="Phase"  value={phase}        color={txt(phase)} />
+          {state && <Row label="State" value={state} color={stateTxt(state)} />}
           {d.nodeName && <Row label="Node" value={d.nodeName} />}
+
+          {dataSizeFmt && (
+            <Row label="Output size" value={dataSizeFmt} color="#67e8f9" />
+          )}
+          {d.specRuntime != null && (
+            <Row label="Spec runtime" value={`${d.specRuntime}s`} color="#9ca3af" />
+          )}
 
           {(d.startTime || d.completionTime) && (
             <div className="border-t border-gray-700 pt-1.5 mt-1.5 space-y-1.5">
               {d.startTime && (
-                <Row label="Start"
-                     value={`${startDate} ${fmtTime(d.startTime)}`} />
+                <Row label="Start" value={`${startDate} ${fmtTime(d.startTime)}`} />
               )}
               {d.completionTime && (
-                <Row label="End"
-                     value={`${fmtDate(d.completionTime)} ${fmtTime(d.completionTime)}`} />
+                <Row label="End" value={`${fmtDate(d.completionTime)} ${fmtTime(d.completionTime)}`} />
               )}
               {d.startTime && d.completionTime && (
-                <Row label="Runtime" value={runtime} color="#a78bfa" />
+                <Row label="Duration" value={runtime} color="#a78bfa" />
               )}
             </div>
           )}
@@ -235,12 +301,18 @@ const nodeTypes = { task: TaskNode }
 
 interface Props { dag: ODAGDetail }
 
-function DAGGraphInner({ dag }: Props) { // dag is ODAGDetail
+function DAGGraphInner({ dag }: Props) {
   const statusMap = useMemo(() => {
     const m: Record<string, TaskStatus> = {}
     for (const t of dag.tasks ?? []) m[t.name] = t
     return m
   }, [dag.tasks])
+
+  const specMap = useMemo(() => {
+    const m: Record<string, { dataSize?: string; runtime?: number }> = {}
+    for (const t of dag.spec.tasks) m[t.name] = { dataSize: t.dataSize, runtime: t.runtime }
+    return m
+  }, [dag.spec.tasks])
 
   // Which tasks have downstream dependents?
   const hasDownstream = useMemo(() => {
@@ -261,9 +333,9 @@ function DAGGraphInner({ dag }: Props) { // dag is ODAGDetail
     return g
   }, [dag.spec.tasks, layers])
 
-  const NODE_W = 210
-  const NODE_H = 90
-  const COL_GAP = 100
+  const NODE_W = 220
+  const NODE_H = 100
+  const COL_GAP = 120
   const ROW_GAP = 30
 
   const nodes: Node[] = useMemo(() =>
@@ -273,6 +345,7 @@ function DAGGraphInner({ dag }: Props) { // dag is ODAGDetail
       const posInLayer = group.indexOf(task.name)
       const totalInLayer = group.length
       const status = statusMap[task.name]
+      const spec = specMap[task.name]
       const phase = status?.phase ?? 'Pending'
 
       const x = layer * (NODE_W + COL_GAP)
@@ -286,9 +359,13 @@ function DAGGraphInner({ dag }: Props) { // dag is ODAGDetail
         data: {
           taskName: task.name,
           phase,
+          state: status?.state,
+          sending: status?.sending,
           nodeName: status?.node,
           startTime: status?.startTime,
           completionTime: status?.completionTime,
+          dataSize: status?.dataSize,
+          specRuntime: spec?.runtime,
           image: task.image,
           constraints: task.constraints?.nodeNames,
           hasDeps: task.dependencies.length > 0,
@@ -296,22 +373,57 @@ function DAGGraphInner({ dag }: Props) { // dag is ODAGDetail
         } satisfies TaskNodeData,
       }
     }),
-  [dag.spec.tasks, statusMap, layers, layerGroups, hasDownstream])
+  [dag.spec.tasks, statusMap, specMap, layers, layerGroups, hasDownstream])
 
   const edges: Edge[] = useMemo(() =>
     dag.spec.tasks.flatMap(task =>
       task.dependencies.map(dep => {
-        const depPhase = statusMap[dep]?.phase ?? 'Pending'
+        const depStatus  = statusMap[dep]
+        const taskStatus = statusMap[task.name]
+        const depPhase   = depStatus?.phase ?? 'Pending'
+        const depState   = depStatus?.state
+
+        // Transfer type: same-node if both assigned and equal
+        const srcNode = depStatus?.node
+        const dstNode = taskStatus?.node
+        const transferType = srcNode && dstNode
+          ? srcNode === dstNode ? 'same-node' : 'cross-node'
+          : undefined
+
+        // Data size from dep's output
+        const sizeFmt = fmtBytes(depStatus?.dataSize)
+
+        // Build edge label
+        const labelParts = []
+        if (sizeFmt) labelParts.push(sizeFmt)
+        if (transferType) labelParts.push(transferType)
+        const label = labelParts.join(' · ')
+
+        // Edge color: purple while sending, cyan when DataReady
+        const depSending = depStatus?.sending
+        const edgeColor = depSending              ? '#c084fc'
+                        : depState === 'DataReady' ? '#67e8f9'
+                        : depPhase === 'Succeeded' ? '#22c55e'
+                        : depPhase === 'Running'   ? '#f59e0b'
+                        : depPhase === 'Failed'    ? '#ef4444'
+                        : '#4b5563'
+
         return {
           id: `${dep}->${task.name}`,
           source: dep,
           target: task.name,
-          animated: depPhase === 'Running',
+          animated: depPhase === 'Running' || !!depSending,
+          label: label || undefined,
+          labelStyle: {
+            fill: transferType === 'cross-node' ? '#c084fc'
+                : transferType === 'same-node'  ? '#67e8f9'
+                : '#9ca3af',
+            fontSize: 10,
+            fontWeight: 500,
+          },
+          labelBgStyle: { fill: '#111827', fillOpacity: 0.85 },
           style: {
-            stroke: depPhase === 'Succeeded' ? '#22c55e'
-                  : depPhase === 'Running'   ? '#f59e0b'
-                  : depPhase === 'Failed'    ? '#ef4444'
-                  : '#4b5563',
+            stroke: edgeColor,
             strokeWidth: 2,
           },
         }

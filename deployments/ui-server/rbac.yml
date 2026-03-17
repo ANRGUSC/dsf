@@ -9,10 +9,10 @@ kind: ClusterRole
 metadata:
   name: ui-server
 rules:
-  # ODAG and CDAG CRDs (read-only)
+  # ODAG and CDAG CRDs (read + retry)
   - apiGroups: ["dsf.io"]
     resources: ["odags", "cdags"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["dsf.io"]
     resources: ["odags/status", "cdags/status"]
     verbs: ["get"]

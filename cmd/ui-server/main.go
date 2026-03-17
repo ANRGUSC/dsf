@@ -95,6 +95,7 @@ func main() {
 	mux.HandleFunc("GET /api/odags", srv.handleListODAGs)
 	mux.HandleFunc("GET /api/odags/{namespace}/{name}", srv.handleGetODAG)
 	mux.HandleFunc("GET /api/odags/{namespace}/{name}/history", srv.handleGetODAGHistory)
+	mux.HandleFunc("POST /api/odags/{namespace}/{name}/retry", srv.handleRetryODAG)
 	mux.HandleFunc("GET /api/cdags", srv.handleListCDAGs)
 	mux.HandleFunc("GET /api/cdags/{namespace}/{name}", srv.handleGetCDAG)
 	mux.HandleFunc("GET /api/events", srv.handleSSE)
@@ -115,8 +116,11 @@ func main() {
 				return
 			}
 			// Serve real static assets (JS, CSS, fonts) directly.
+			// no-cache ensures the browser always revalidates so it picks
+			// up new content-hashed bundles without a hard refresh.
 			if r.URL.Path != "/" {
 				if _, err := os.Stat(uiDir + r.URL.Path); err == nil {
+					w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 					fs.ServeHTTP(w, r)
 					return
 				}
@@ -218,6 +222,56 @@ func (s *Server) handleGetODAGHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, history)
+}
+
+func (s *Server) handleRetryODAG(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	ctx := r.Context()
+
+	// Fetch current object to extract spec.
+	existing, err := s.dynClient.Resource(odagGVR).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	spec, _, _ := unstructured.NestedMap(existing.Object, "spec")
+
+	// Delete the existing ODAG.
+	if err := s.dynClient.Resource(odagGVR).Namespace(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Respond immediately — recreation happens in background so the browser
+	// returns quickly and the SSE stream drives the live graph updates.
+	writeJSON(w, map[string]string{"status": "ok"})
+
+	go func() {
+		bgCtx := context.Background()
+		fresh := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "dsf.io/v1",
+				"kind":       "ODAG",
+				"metadata": map[string]interface{}{
+					"name":      name,
+					"namespace": ns,
+				},
+				"spec": spec,
+			},
+		}
+		// Wait up to 10s for the object to be gone, then recreate.
+		for i := 0; i < 20; i++ {
+			time.Sleep(500 * time.Millisecond)
+			_, err := s.dynClient.Resource(odagGVR).Namespace(ns).Get(bgCtx, name, metav1.GetOptions{})
+			if err != nil {
+				break
+			}
+		}
+		if _, err := s.dynClient.Resource(odagGVR).Namespace(ns).Create(bgCtx, fresh, metav1.CreateOptions{}); err != nil {
+			log.Printf("[ui-server] retry create failed for %s/%s: %v", ns, name, err)
+		}
+	}()
 }
 
 func (s *Server) handleListCDAGs(w http.ResponseWriter, r *http.Request) {
@@ -392,7 +446,7 @@ func odagSummary(obj *unstructured.Unstructured) map[string]interface{} {
 		"name":           obj.GetName(),
 		"namespace":      obj.GetNamespace(),
 		"phase":          defaultStr(phase, "Pending"),
-		"scheduler":      defaultStr(sched, "heft"),
+		"scheduler":      defaultStr(sched, "random"),
 		"taskCount":      len(tasks),
 		"makespan":       makespan,
 		"startTime":      startTime,
@@ -405,8 +459,12 @@ func odagDetail(obj *unstructured.Unstructured) map[string]interface{} {
 	summary := odagSummary(obj)
 	taskStatuses, _, _ := unstructured.NestedSlice(obj.Object, "status", "tasks")
 	specTasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	predictedTasks, _, _ := unstructured.NestedSlice(obj.Object, "status", "predictedTasks")
 	summary["tasks"] = taskStatuses
 	summary["spec"] = map[string]interface{}{"tasks": specTasks}
+	if predictedTasks != nil {
+		summary["predictedTasks"] = predictedTasks
+	}
 	return summary
 }
 
@@ -418,7 +476,7 @@ func cdagSummary(obj *unstructured.Unstructured) map[string]interface{} {
 		"name":      obj.GetName(),
 		"namespace": obj.GetNamespace(),
 		"phase":     defaultStr(phase, "Pending"),
-		"scheduler": defaultStr(sched, "heft"),
+		"scheduler": defaultStr(sched, "random"),
 		"taskCount": len(tasks),
 		"createdAt": obj.GetCreationTimestamp().UTC().Format(time.RFC3339),
 	}

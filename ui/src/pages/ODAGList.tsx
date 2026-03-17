@@ -21,7 +21,6 @@ export default function ODAGList() {
             <th className="pb-2 pr-4">Name</th>
             <th className="pb-2 pr-4">Namespace</th>
             <th className="pb-2 pr-4">Phase</th>
-            <th className="pb-2 pr-4">Scheduler</th>
             <th className="pb-2 pr-4">Tasks</th>
             <th className="pb-2 pr-4">Makespan</th>
             <th className="pb-2">Age</th>
@@ -30,7 +29,7 @@ export default function ODAGList() {
         <tbody>
           {odags?.length === 0 && (
             <tr>
-              <td colSpan={7} className="pt-4 text-gray-500 text-center">
+              <td colSpan={6} className="pt-4 text-gray-500 text-center">
                 No ODAGs found. Submit one with <code>dsf odag submit -f dag.yml</code>
               </td>
             </tr>
@@ -47,7 +46,6 @@ export default function ODAGList() {
               </td>
               <td className="py-2 pr-4 text-gray-400">{dag.namespace}</td>
               <td className="py-2 pr-4"><StatusBadge phase={dag.phase} /></td>
-              <td className="py-2 pr-4 text-gray-400">{dag.scheduler}</td>
               <td className="py-2 pr-4 text-gray-400">{dag.taskCount}</td>
               <td className="py-2 pr-4 text-gray-400">
                 {dag.makespan != null ? `${dag.makespan.toFixed(1)}s` : '—'}

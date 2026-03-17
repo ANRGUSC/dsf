@@ -1,20 +1,47 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { api } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
 import DAGGraph from '@/components/DAGGraph'
+import GanttChart from '@/components/GanttChart'
 
-type Tab = 'graph' | 'tasks' | 'history'
+type Tab = 'graph' | 'tasks' | 'history' | 'schedule'
 
 export default function ODAGDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
   const [tab, setTab] = useState<Tab>('graph')
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+
+  async function handleRetry() {
+    if (!namespace || !name) return
+    setRetrying(true)
+    setRetryError(null)
+    try {
+      await api.retryODAG(namespace, name)
+      // Keep "Retrying..." visible long enough for React to paint it,
+      // then let SSE-driven refetches take over for live graph updates.
+      await new Promise(r => setTimeout(r, 1500))
+      queryClient.invalidateQueries({ queryKey: ['odag', namespace, name] })
+      queryClient.invalidateQueries({ queryKey: ['odag-history', namespace, name] })
+    } catch (e) {
+      setRetryError(String(e))
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   const { data: dag, isLoading, error } = useQuery({
     queryKey: ['odag', namespace, name],
     queryFn: () => api.getODAG(namespace!, name!),
+    staleTime: 0,
+    refetchInterval: (query) => {
+      const phase = (query.state.data as { phase?: string } | undefined)?.phase
+      return phase === 'Running' || phase === 'Scheduling' || phase === 'Pending' ? 500 : 30000
+    },
   })
 
   const { data: history } = useQuery({
@@ -39,15 +66,26 @@ export default function ODAGDetail() {
       <div className="flex items-center gap-4 mb-6">
         <h1 className="text-lg font-semibold">{dag.name}</h1>
         <StatusBadge phase={dag.phase} />
-        <span className="text-gray-500 text-sm">scheduler: {dag.scheduler}</span>
-        {dag.makespan != null && (
+{dag.makespan != null && (
           <span className="text-gray-500 text-sm">makespan: {dag.makespan.toFixed(1)}s</span>
         )}
+        <div className="ml-auto flex items-center gap-3">
+          {retryError && (
+            <span className="text-xs text-red-400">{retryError}</span>
+          )}
+          <button
+            onClick={handleRetry}
+            disabled={retrying || dag.phase === 'Running' || dag.phase === 'Scheduling' || dag.phase === 'Pending'}
+            className="text-xs px-3 py-1.5 rounded border border-gray-600 text-gray-300 hover:border-blue-500 hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {retrying ? 'Retrying...' : 'Retry'}
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-gray-800 mb-6 text-sm">
-        {(['graph', 'tasks', 'history'] as Tab[]).map(t => (
+        {(['graph', 'tasks', 'schedule', 'history'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -61,19 +99,45 @@ export default function ODAGDetail() {
       {/* Graph tab */}
       {tab === 'graph' && <DAGGraph dag={dag} />}
 
+      {/* Schedule tab */}
+      {tab === 'schedule' && <GanttChart dag={dag} />}
+
       {/* Tasks tab */}
       {tab === 'tasks' && (() => {
         const constraintMap = new Map(
           dag.spec.tasks.map(t => [t.name, t.constraints?.nodeNames ?? []])
         )
+        const specMap = new Map(
+          dag.spec.tasks.map(t => [t.name, t])
+        )
+        function fmtDuration(start?: string, end?: string): string {
+          if (!start) return '—'
+          const s = new Date(start).getTime()
+          const e = end ? new Date(end).getTime() : Date.now()
+          const sec = Math.round((e - s) / 1000)
+          return `${sec}s`
+        }
+        function fmtBytes(b?: string): string {
+          if (!b) return '—'
+          const n = parseInt(b, 10)
+          if (isNaN(n) || n === 0) return '0'
+          if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)} GB`
+          if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)} MB`
+          if (n >= 1_000) return `${(n / 1_000).toFixed(0)} KB`
+          return `${n} B`
+        }
         return (
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="text-left text-gray-400 border-b border-gray-800">
                 <th className="pb-2 pr-4">Task</th>
                 <th className="pb-2 pr-4">Phase</th>
+                <th className="pb-2 pr-4">State</th>
                 <th className="pb-2 pr-4">Node</th>
                 <th className="pb-2 pr-4">Allowed Nodes</th>
+                <th className="pb-2 pr-4">Duration</th>
+                <th className="pb-2 pr-4">Data Size</th>
+                <th className="pb-2 pr-4">Spec Runtime</th>
                 <th className="pb-2 pr-4">Pod</th>
                 <th className="pb-2 pr-4">Retries</th>
                 <th className="pb-2">Message</th>
@@ -82,14 +146,19 @@ export default function ODAGDetail() {
             <tbody>
               {dag.tasks.map(task => {
                 const allowed = constraintMap.get(task.name) ?? []
+                const spec = specMap.get(task.name)
                 return (
                   <tr key={task.name} className="border-b border-gray-900">
                     <td className="py-2 pr-4 font-medium">{task.name}</td>
                     <td className="py-2 pr-4"><StatusBadge phase={task.phase} /></td>
+                    <td className="py-2 pr-4 text-gray-400 text-xs">{task.state ?? '—'}</td>
                     <td className="py-2 pr-4 text-gray-400">{task.node ?? '—'}</td>
                     <td className="py-2 pr-4 text-gray-500 text-xs">
                       {allowed.length > 0 ? allowed.join(', ') : <span className="text-gray-700">any</span>}
                     </td>
+                    <td className="py-2 pr-4 text-gray-400 text-xs">{fmtDuration(task.startTime, task.completionTime)}</td>
+                    <td className="py-2 pr-4 text-gray-400 text-xs">{fmtBytes(task.dataSize)}</td>
+                    <td className="py-2 pr-4 text-gray-500 text-xs">{spec?.runtime != null ? `${spec.runtime}s` : '—'}</td>
                     <td className="py-2 pr-4 text-gray-500 text-xs">{task.podName ?? '—'}</td>
                     <td className="py-2 pr-4 text-gray-400">{task.retries ?? 0}</td>
                     <td className="py-2 text-gray-500 text-xs">{task.message ?? ''}</td>

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: data-agent
+  namespace: dsf-system
+spec:
+  selector:
+    matchLabels:
+      app: data-agent
+  template:
+    metadata:
+      labels:
+        app: data-agent
+    spec:
+      tolerations:
+        - operator: Exists  # run on all nodes including master
+      containers:
+        - name: data-agent
+          image: 192.168.1.163:5000/data-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+              hostPort: 8081   # reachable at <node-ip>:8081 from any pod
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: dsf-outputs
+              mountPath: /data/dsf-outputs
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 30
+      volumes:
+        - name: dsf-outputs
+          hostPath:
+            path: /data/dsf-outputs
+            type: DirectoryOrCreate
