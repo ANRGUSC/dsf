@@ -111,6 +111,12 @@ class FileTransport:
             flush=True,
         )
 
+        # Signal DataReady on this node immediately after the local write.
+        # Same-node successors can now be scheduled without waiting for any
+        # cross-node transfer. Cross-node successors get their own DataReady
+        # signal on their node when the data-agent push arrives there.
+        self._set_state("DataReady")
+
         # 2. Build list of cross-node successors for the data-agent to push to.
         succs_env = os.environ.get("DSF_SUCCESSORS", "")
         successors = []

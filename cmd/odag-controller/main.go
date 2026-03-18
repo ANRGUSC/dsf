@@ -205,6 +205,20 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 		log.Printf("[odag-ctrl]   %-20s -> %s (%s)", task, ni.name, ni.ip)
 	}
 
+	// Clear any stale DataReady states on child nodes left over from a
+	// previous run of the same ODAG (same name → same hostPath files).
+	// For every (dep → child) edge, reset dep's state on the child's node
+	// so the controller doesn't see stale DataReady and launch tasks early.
+	for _, task := range tasks {
+		childNi := assignMap[task.Name]
+		if childNi.ip == "" {
+			continue
+		}
+		for _, dep := range task.Dependencies {
+			resetTaskState(childNi.ip, odagName, dep)
+		}
+	}
+
 	updateODAGPhase(dynClient, namespace, odagName, "Running", "")
 	processReadyTasks(dynClient, client, namespace, odagName, obj.GetUID())
 }
@@ -290,42 +304,41 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 		return
 	}
 
-	// Build status maps from live pod state.
-	// dataReadyTasks: deps that have signalled DataReady (or already Succeeded).
-	// A Running pod may have DataReady state before its pod exits — this is the
-	// key trigger that allows downstream tasks to start earlier.
-	dataReadyTasks := make(map[string]bool)
+	// Build a map of which tasks already have pods, and their current pod phase.
 	existingPods := make(map[string]bool)
+	podPhases := make(map[string]corev1.PodPhase)
 	for _, pod := range pods.Items {
 		taskName := pod.Labels[labelTaskName]
 		existingPods[taskName] = true
-		ni := assignMap[taskName]
-		switch pod.Status.Phase {
-		case corev1.PodSucceeded:
-			// In option-3 decoupled transfer, the pod exits before the data-agent
-			// push completes. Only mark DataReady once the data-agent confirms it.
-			// If data-agent is unreachable, fall back to ready so we don't get stuck.
-			if ni.ip == "" || isDataReady(ni.ip, odagName, taskName) {
-				dataReadyTasks[taskName] = true
-			}
-		case corev1.PodRunning:
-			if ni.ip != "" && isDataReady(ni.ip, odagName, taskName) {
-				dataReadyTasks[taskName] = true
-			}
-		}
+		podPhases[taskName] = pod.Status.Phase
 	}
 
-	// For each task: if it has no pod yet AND all dependencies are DataReady,
-	// create its pod now.
+	// For each task: if it has no pod yet AND all dependencies have DataReady on
+	// THIS task's node (Proposal-1 per-child-node DataReady), create its pod now.
 	for _, task := range tasks {
 		if existingPods[task.Name] {
 			continue
 		}
+		childNi := assignMap[task.Name]
 		allDepsDone := true
 		for _, dep := range task.Dependencies {
-			if !dataReadyTasks[dep] {
+			if !existingPods[dep] {
+				// Dep pod hasn't been created yet — not ready.
 				allDepsDone = false
 				break
+			}
+			if childNi.ip != "" {
+				// Check DataReady on this child's node: has dep's data arrived here?
+				if !isDataReady(childNi.ip, odagName, dep) {
+					allDepsDone = false
+					break
+				}
+			} else {
+				// No data-agent reachable for child: fall back to dep PodSucceeded.
+				if podPhases[dep] != corev1.PodSucceeded {
+					allDepsDone = false
+					break
+				}
 			}
 		}
 		if !allDepsDone {

@@ -290,7 +290,15 @@ func main() {
 				http.Error(w, "failed to write file", http.StatusInternalServerError)
 				return
 			}
-			log.Printf("[data-agent/%s] PUT %s (%d bytes)", nodeName, r.URL.Path, n)
+			// If this is a pushed output file (<odag>/<task>/output), set DataReady
+			// on this node so the controller knows the data has arrived here.
+			if strings.HasSuffix(cleanPath, "/output") {
+				rel := strings.TrimPrefix(strings.TrimSuffix(cleanPath, "/output"), "/")
+				setState(rel, "DataReady")
+				log.Printf("[data-agent/%s] PUT %s (%d bytes) → DataReady", nodeName, r.URL.Path, n)
+			} else {
+				log.Printf("[data-agent/%s] PUT %s (%d bytes)", nodeName, r.URL.Path, n)
+			}
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
 			if _, err := os.Stat(fullPath); os.IsNotExist(err) {
