@@ -58,8 +58,8 @@ spec:
         bind: true
       stateful: false
       throughputTarget:
-        messagesPerSecond: 10
-        bytesPerSecond: "100KB/s"
+        messagesPerSecond: 100
+        bytesPerSecond: "125MB/s"  # 1000 Mbps
       migrationPolicy:
         enabled: true
         triggerConditions:
@@ -92,8 +92,8 @@ spec:
         bind: false
       stateful: false
       throughputTarget:
-        messagesPerSecond: 10
-        bytesPerSecond: "100KB/s"
+        messagesPerSecond: 100
+        bytesPerSecond: "125MB/s"  # 1000 Mbps
       migrationPolicy:
         enabled: true
         triggerConditions:

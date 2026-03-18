@@ -1,0 +1,4835 @@
+apiVersion: dsf.example.com/v1
+kind: ContinuousTaskGraph
+metadata:
+  name: gpt2-ctg
+  namespace: default
+spec:
+  zeromq:
+    discovery:
+      method: kubernetes
+      namespace: default
+      serviceNamePattern: '{task-name}-service'
+    topicPrefix: gpt2-ctg
+    defaultPort: 5555
+    defaultTransport: tcp
+    connectionTimeout: 5000
+    reconnectInterval: 1000
+    maxReconnectAttempts: 10
+  scheduler:
+    name: ctg-scheduler
+    optimizeFor: latency
+  migration:
+    enabled: false
+  namespace: default
+  tasks:
+  - name: feeder
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - feeder.py
+    - --warmup
+    - '45'
+    - --auto
+    - '2'
+    dependencies: []
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/feeder/input
+      subscribeTopics: []
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-qkv
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - qkv
+    - --layer
+    - '0'
+    dependencies:
+    - feeder
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-qkv/output
+      subscribeTopics:
+      - gpt2-ctg/feeder/input
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l0-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-attn-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-merge
+    - --layer
+    - '0'
+    dependencies:
+    - l0-qkv
+    - l0-attn-shard-0
+    - l0-attn-shard-1
+    - l0-attn-shard-2
+    - l0-attn-shard-3
+    - l0-attn-shard-4
+    - l0-attn-shard-5
+    - l0-attn-shard-6
+    - l0-attn-shard-7
+    - l0-attn-shard-8
+    - l0-attn-shard-9
+    - l0-attn-shard-10
+    - l0-attn-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l0-qkv/output
+      - gpt2-ctg/l0-attn-shard-0/output
+      - gpt2-ctg/l0-attn-shard-1/output
+      - gpt2-ctg/l0-attn-shard-2/output
+      - gpt2-ctg/l0-attn-shard-3/output
+      - gpt2-ctg/l0-attn-shard-4/output
+      - gpt2-ctg/l0-attn-shard-5/output
+      - gpt2-ctg/l0-attn-shard-6/output
+      - gpt2-ctg/l0-attn-shard-7/output
+      - gpt2-ctg/l0-attn-shard-8/output
+      - gpt2-ctg/l0-attn-shard-9/output
+      - gpt2-ctg/l0-attn-shard-10/output
+      - gpt2-ctg/l0-attn-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '0'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l0-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l0-mlp-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-merge
+    - --layer
+    - '0'
+    dependencies:
+    - l0-attn-merge
+    - l0-mlp-shard-0
+    - l0-mlp-shard-1
+    - l0-mlp-shard-2
+    - l0-mlp-shard-3
+    - l0-mlp-shard-4
+    - l0-mlp-shard-5
+    - l0-mlp-shard-6
+    - l0-mlp-shard-7
+    - l0-mlp-shard-8
+    - l0-mlp-shard-9
+    - l0-mlp-shard-10
+    - l0-mlp-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l0-mlp-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l0-attn-merge/output
+      - gpt2-ctg/l0-mlp-shard-0/output
+      - gpt2-ctg/l0-mlp-shard-1/output
+      - gpt2-ctg/l0-mlp-shard-2/output
+      - gpt2-ctg/l0-mlp-shard-3/output
+      - gpt2-ctg/l0-mlp-shard-4/output
+      - gpt2-ctg/l0-mlp-shard-5/output
+      - gpt2-ctg/l0-mlp-shard-6/output
+      - gpt2-ctg/l0-mlp-shard-7/output
+      - gpt2-ctg/l0-mlp-shard-8/output
+      - gpt2-ctg/l0-mlp-shard-9/output
+      - gpt2-ctg/l0-mlp-shard-10/output
+      - gpt2-ctg/l0-mlp-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-qkv
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - qkv
+    - --layer
+    - '1'
+    dependencies:
+    - l0-mlp-merge
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-qkv/output
+      subscribeTopics:
+      - gpt2-ctg/l0-mlp-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l1-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-attn-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-merge
+    - --layer
+    - '1'
+    dependencies:
+    - l1-qkv
+    - l1-attn-shard-0
+    - l1-attn-shard-1
+    - l1-attn-shard-2
+    - l1-attn-shard-3
+    - l1-attn-shard-4
+    - l1-attn-shard-5
+    - l1-attn-shard-6
+    - l1-attn-shard-7
+    - l1-attn-shard-8
+    - l1-attn-shard-9
+    - l1-attn-shard-10
+    - l1-attn-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l1-qkv/output
+      - gpt2-ctg/l1-attn-shard-0/output
+      - gpt2-ctg/l1-attn-shard-1/output
+      - gpt2-ctg/l1-attn-shard-2/output
+      - gpt2-ctg/l1-attn-shard-3/output
+      - gpt2-ctg/l1-attn-shard-4/output
+      - gpt2-ctg/l1-attn-shard-5/output
+      - gpt2-ctg/l1-attn-shard-6/output
+      - gpt2-ctg/l1-attn-shard-7/output
+      - gpt2-ctg/l1-attn-shard-8/output
+      - gpt2-ctg/l1-attn-shard-9/output
+      - gpt2-ctg/l1-attn-shard-10/output
+      - gpt2-ctg/l1-attn-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '1'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l1-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l1-mlp-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-merge
+    - --layer
+    - '1'
+    dependencies:
+    - l1-attn-merge
+    - l1-mlp-shard-0
+    - l1-mlp-shard-1
+    - l1-mlp-shard-2
+    - l1-mlp-shard-3
+    - l1-mlp-shard-4
+    - l1-mlp-shard-5
+    - l1-mlp-shard-6
+    - l1-mlp-shard-7
+    - l1-mlp-shard-8
+    - l1-mlp-shard-9
+    - l1-mlp-shard-10
+    - l1-mlp-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l1-mlp-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l1-attn-merge/output
+      - gpt2-ctg/l1-mlp-shard-0/output
+      - gpt2-ctg/l1-mlp-shard-1/output
+      - gpt2-ctg/l1-mlp-shard-2/output
+      - gpt2-ctg/l1-mlp-shard-3/output
+      - gpt2-ctg/l1-mlp-shard-4/output
+      - gpt2-ctg/l1-mlp-shard-5/output
+      - gpt2-ctg/l1-mlp-shard-6/output
+      - gpt2-ctg/l1-mlp-shard-7/output
+      - gpt2-ctg/l1-mlp-shard-8/output
+      - gpt2-ctg/l1-mlp-shard-9/output
+      - gpt2-ctg/l1-mlp-shard-10/output
+      - gpt2-ctg/l1-mlp-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-qkv
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - qkv
+    - --layer
+    - '2'
+    dependencies:
+    - l1-mlp-merge
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-qkv/output
+      subscribeTopics:
+      - gpt2-ctg/l1-mlp-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l2-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-attn-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-merge
+    - --layer
+    - '2'
+    dependencies:
+    - l2-qkv
+    - l2-attn-shard-0
+    - l2-attn-shard-1
+    - l2-attn-shard-2
+    - l2-attn-shard-3
+    - l2-attn-shard-4
+    - l2-attn-shard-5
+    - l2-attn-shard-6
+    - l2-attn-shard-7
+    - l2-attn-shard-8
+    - l2-attn-shard-9
+    - l2-attn-shard-10
+    - l2-attn-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l2-qkv/output
+      - gpt2-ctg/l2-attn-shard-0/output
+      - gpt2-ctg/l2-attn-shard-1/output
+      - gpt2-ctg/l2-attn-shard-2/output
+      - gpt2-ctg/l2-attn-shard-3/output
+      - gpt2-ctg/l2-attn-shard-4/output
+      - gpt2-ctg/l2-attn-shard-5/output
+      - gpt2-ctg/l2-attn-shard-6/output
+      - gpt2-ctg/l2-attn-shard-7/output
+      - gpt2-ctg/l2-attn-shard-8/output
+      - gpt2-ctg/l2-attn-shard-9/output
+      - gpt2-ctg/l2-attn-shard-10/output
+      - gpt2-ctg/l2-attn-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '2'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l2-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l2-mlp-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-merge
+    - --layer
+    - '2'
+    dependencies:
+    - l2-attn-merge
+    - l2-mlp-shard-0
+    - l2-mlp-shard-1
+    - l2-mlp-shard-2
+    - l2-mlp-shard-3
+    - l2-mlp-shard-4
+    - l2-mlp-shard-5
+    - l2-mlp-shard-6
+    - l2-mlp-shard-7
+    - l2-mlp-shard-8
+    - l2-mlp-shard-9
+    - l2-mlp-shard-10
+    - l2-mlp-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l2-mlp-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l2-attn-merge/output
+      - gpt2-ctg/l2-mlp-shard-0/output
+      - gpt2-ctg/l2-mlp-shard-1/output
+      - gpt2-ctg/l2-mlp-shard-2/output
+      - gpt2-ctg/l2-mlp-shard-3/output
+      - gpt2-ctg/l2-mlp-shard-4/output
+      - gpt2-ctg/l2-mlp-shard-5/output
+      - gpt2-ctg/l2-mlp-shard-6/output
+      - gpt2-ctg/l2-mlp-shard-7/output
+      - gpt2-ctg/l2-mlp-shard-8/output
+      - gpt2-ctg/l2-mlp-shard-9/output
+      - gpt2-ctg/l2-mlp-shard-10/output
+      - gpt2-ctg/l2-mlp-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-qkv
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - qkv
+    - --layer
+    - '3'
+    dependencies:
+    - l2-mlp-merge
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-qkv/output
+      subscribeTopics:
+      - gpt2-ctg/l2-mlp-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l3-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-attn-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-merge
+    - --layer
+    - '3'
+    dependencies:
+    - l3-qkv
+    - l3-attn-shard-0
+    - l3-attn-shard-1
+    - l3-attn-shard-2
+    - l3-attn-shard-3
+    - l3-attn-shard-4
+    - l3-attn-shard-5
+    - l3-attn-shard-6
+    - l3-attn-shard-7
+    - l3-attn-shard-8
+    - l3-attn-shard-9
+    - l3-attn-shard-10
+    - l3-attn-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l3-qkv/output
+      - gpt2-ctg/l3-attn-shard-0/output
+      - gpt2-ctg/l3-attn-shard-1/output
+      - gpt2-ctg/l3-attn-shard-2/output
+      - gpt2-ctg/l3-attn-shard-3/output
+      - gpt2-ctg/l3-attn-shard-4/output
+      - gpt2-ctg/l3-attn-shard-5/output
+      - gpt2-ctg/l3-attn-shard-6/output
+      - gpt2-ctg/l3-attn-shard-7/output
+      - gpt2-ctg/l3-attn-shard-8/output
+      - gpt2-ctg/l3-attn-shard-9/output
+      - gpt2-ctg/l3-attn-shard-10/output
+      - gpt2-ctg/l3-attn-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '3'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l3-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l3-mlp-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-merge
+    - --layer
+    - '3'
+    dependencies:
+    - l3-attn-merge
+    - l3-mlp-shard-0
+    - l3-mlp-shard-1
+    - l3-mlp-shard-2
+    - l3-mlp-shard-3
+    - l3-mlp-shard-4
+    - l3-mlp-shard-5
+    - l3-mlp-shard-6
+    - l3-mlp-shard-7
+    - l3-mlp-shard-8
+    - l3-mlp-shard-9
+    - l3-mlp-shard-10
+    - l3-mlp-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l3-mlp-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l3-attn-merge/output
+      - gpt2-ctg/l3-mlp-shard-0/output
+      - gpt2-ctg/l3-mlp-shard-1/output
+      - gpt2-ctg/l3-mlp-shard-2/output
+      - gpt2-ctg/l3-mlp-shard-3/output
+      - gpt2-ctg/l3-mlp-shard-4/output
+      - gpt2-ctg/l3-mlp-shard-5/output
+      - gpt2-ctg/l3-mlp-shard-6/output
+      - gpt2-ctg/l3-mlp-shard-7/output
+      - gpt2-ctg/l3-mlp-shard-8/output
+      - gpt2-ctg/l3-mlp-shard-9/output
+      - gpt2-ctg/l3-mlp-shard-10/output
+      - gpt2-ctg/l3-mlp-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-qkv
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - qkv
+    - --layer
+    - '4'
+    dependencies:
+    - l3-mlp-merge
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-qkv/output
+      subscribeTopics:
+      - gpt2-ctg/l3-mlp-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l4-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-attn-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-merge
+    - --layer
+    - '4'
+    dependencies:
+    - l4-qkv
+    - l4-attn-shard-0
+    - l4-attn-shard-1
+    - l4-attn-shard-2
+    - l4-attn-shard-3
+    - l4-attn-shard-4
+    - l4-attn-shard-5
+    - l4-attn-shard-6
+    - l4-attn-shard-7
+    - l4-attn-shard-8
+    - l4-attn-shard-9
+    - l4-attn-shard-10
+    - l4-attn-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l4-qkv/output
+      - gpt2-ctg/l4-attn-shard-0/output
+      - gpt2-ctg/l4-attn-shard-1/output
+      - gpt2-ctg/l4-attn-shard-2/output
+      - gpt2-ctg/l4-attn-shard-3/output
+      - gpt2-ctg/l4-attn-shard-4/output
+      - gpt2-ctg/l4-attn-shard-5/output
+      - gpt2-ctg/l4-attn-shard-6/output
+      - gpt2-ctg/l4-attn-shard-7/output
+      - gpt2-ctg/l4-attn-shard-8/output
+      - gpt2-ctg/l4-attn-shard-9/output
+      - gpt2-ctg/l4-attn-shard-10/output
+      - gpt2-ctg/l4-attn-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '4'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l4-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l4-mlp-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-merge
+    - --layer
+    - '4'
+    dependencies:
+    - l4-attn-merge
+    - l4-mlp-shard-0
+    - l4-mlp-shard-1
+    - l4-mlp-shard-2
+    - l4-mlp-shard-3
+    - l4-mlp-shard-4
+    - l4-mlp-shard-5
+    - l4-mlp-shard-6
+    - l4-mlp-shard-7
+    - l4-mlp-shard-8
+    - l4-mlp-shard-9
+    - l4-mlp-shard-10
+    - l4-mlp-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l4-mlp-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l4-attn-merge/output
+      - gpt2-ctg/l4-mlp-shard-0/output
+      - gpt2-ctg/l4-mlp-shard-1/output
+      - gpt2-ctg/l4-mlp-shard-2/output
+      - gpt2-ctg/l4-mlp-shard-3/output
+      - gpt2-ctg/l4-mlp-shard-4/output
+      - gpt2-ctg/l4-mlp-shard-5/output
+      - gpt2-ctg/l4-mlp-shard-6/output
+      - gpt2-ctg/l4-mlp-shard-7/output
+      - gpt2-ctg/l4-mlp-shard-8/output
+      - gpt2-ctg/l4-mlp-shard-9/output
+      - gpt2-ctg/l4-mlp-shard-10/output
+      - gpt2-ctg/l4-mlp-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-qkv
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - qkv
+    - --layer
+    - '5'
+    dependencies:
+    - l4-mlp-merge
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-qkv/output
+      subscribeTopics:
+      - gpt2-ctg/l4-mlp-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l5-qkv
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-attn-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - attn-merge
+    - --layer
+    - '5'
+    dependencies:
+    - l5-qkv
+    - l5-attn-shard-0
+    - l5-attn-shard-1
+    - l5-attn-shard-2
+    - l5-attn-shard-3
+    - l5-attn-shard-4
+    - l5-attn-shard-5
+    - l5-attn-shard-6
+    - l5-attn-shard-7
+    - l5-attn-shard-8
+    - l5-attn-shard-9
+    - l5-attn-shard-10
+    - l5-attn-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l5-qkv/output
+      - gpt2-ctg/l5-attn-shard-0/output
+      - gpt2-ctg/l5-attn-shard-1/output
+      - gpt2-ctg/l5-attn-shard-2/output
+      - gpt2-ctg/l5-attn-shard-3/output
+      - gpt2-ctg/l5-attn-shard-4/output
+      - gpt2-ctg/l5-attn-shard-5/output
+      - gpt2-ctg/l5-attn-shard-6/output
+      - gpt2-ctg/l5-attn-shard-7/output
+      - gpt2-ctg/l5-attn-shard-8/output
+      - gpt2-ctg/l5-attn-shard-9/output
+      - gpt2-ctg/l5-attn-shard-10/output
+      - gpt2-ctg/l5-attn-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-0
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '0'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-0/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-1
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '1'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-1/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-2
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '2'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-2/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-3
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '3'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-3/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-4
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '4'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-4/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-5
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '5'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-5/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-6
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '6'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-6/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-7
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '7'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-7/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-8
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '8'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-8/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-9
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '9'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-9/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-10
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '10'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-10/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-shard-11
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-shard
+    - --layer
+    - '5'
+    - --shard-idx
+    - '11'
+    dependencies:
+    - l5-attn-merge
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-shard-11/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true
+  - name: l5-mlp-merge
+    image: mohammadalikh/gpt2-ctg:v1
+    command:
+    - python
+    - layer_node_ctg.py
+    args:
+    - --role
+    - mlp-merge
+    - --layer
+    - '5'
+    dependencies:
+    - l5-attn-merge
+    - l5-mlp-shard-0
+    - l5-mlp-shard-1
+    - l5-mlp-shard-2
+    - l5-mlp-shard-3
+    - l5-mlp-shard-4
+    - l5-mlp-shard-5
+    - l5-mlp-shard-6
+    - l5-mlp-shard-7
+    - l5-mlp-shard-8
+    - l5-mlp-shard-9
+    - l5-mlp-shard-10
+    - l5-mlp-shard-11
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+    replicas: 1
+    zeromq:
+      publishTopics:
+      - gpt2-ctg/l5-mlp-merge/output
+      subscribeTopics:
+      - gpt2-ctg/l5-attn-merge/output
+      - gpt2-ctg/l5-mlp-shard-0/output
+      - gpt2-ctg/l5-mlp-shard-1/output
+      - gpt2-ctg/l5-mlp-shard-2/output
+      - gpt2-ctg/l5-mlp-shard-3/output
+      - gpt2-ctg/l5-mlp-shard-4/output
+      - gpt2-ctg/l5-mlp-shard-5/output
+      - gpt2-ctg/l5-mlp-shard-6/output
+      - gpt2-ctg/l5-mlp-shard-7/output
+      - gpt2-ctg/l5-mlp-shard-8/output
+      - gpt2-ctg/l5-mlp-shard-9/output
+      - gpt2-ctg/l5-mlp-shard-10/output
+      - gpt2-ctg/l5-mlp-shard-11/output
+      pattern: PUB
+      port: 5555
+      transport: tcp
+      bind: true

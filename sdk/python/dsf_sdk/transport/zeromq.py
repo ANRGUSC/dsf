@@ -39,22 +39,17 @@ class ZmqPushPullTransport:
         self._pull: zmq.Socket | None = None
         self._push: dict[str, zmq.Socket] = {}
 
-    def send(self, peer: str, payload: bytes) -> None:
-        """Connect-PUSH to peer's PULL socket (identified by DSF_PEER_<PEER> endpoint)."""
-        if peer not in self._push:
-            endpoint = self._peer_endpoints.get(peer)
-            if not endpoint:
-                raise ValueError(
-                    f"No endpoint for peer '{peer}'. "
-                    f"Set DSF_PEER_{peer.upper().replace('-', '_')} env var."
-                )
-            sock = self._ctx.socket(zmq.PUSH)
-            sock.setsockopt(zmq.LINGER, 5000)  # wait up to 5s for delivery on close
-            sock.connect(endpoint.replace("zmq://", "tcp://"))
-            self._push[peer] = sock
-            time.sleep(0.2)  # allow connection to establish before first send
-        self._push[peer].send(payload)
-        time.sleep(0.3)  # let the I/O thread flush to TCP before caller exits
+    def send(self, payload: bytes) -> None:
+        """Connect-PUSH to all configured downstream peers."""
+        for peer, endpoint in self._peer_endpoints.items():
+            if peer not in self._push:
+                sock = self._ctx.socket(zmq.PUSH)
+                sock.setsockopt(zmq.LINGER, 5000)
+                sock.connect(endpoint.replace("zmq://", "tcp://"))
+                self._push[peer] = sock
+                time.sleep(0.2)
+            self._push[peer].send(payload)
+        time.sleep(0.3)
 
     def recv(self, peer: str | None = None) -> bytes:
         """Bind-PULL: receives from whichever upstream peer pushes first."""
@@ -62,6 +57,9 @@ class ZmqPushPullTransport:
             self._pull = self._ctx.socket(zmq.PULL)
             self._pull.bind(f"tcp://*:{self._recv_port}")
         return self._pull.recv()
+
+    def recv_all(self) -> dict[str, bytes]:
+        raise NotImplementedError("recv_all() is not supported for pushpull transport")
 
     def close(self) -> None:
         for s in self._push.values():
@@ -90,14 +88,15 @@ class ZmqPubSubTransport:
         self._pub: zmq.Socket | None = None
         self._sub: dict[str, zmq.Socket] = {}
 
-    def send(self, peer: str, payload: bytes) -> None:
-        """Bind-PUB: publish to all subscribers (peer arg is used as topic prefix)."""
+    def send(self, payload: bytes) -> None:
+        """Bind-PUB: publish payload to all subscribers."""
+        import os
         if self._pub is None:
             self._pub = self._ctx.socket(zmq.PUB)
             self._pub.bind(f"tcp://*:{self._pub_port}")
             time.sleep(0.5)  # wait for subscribers to connect
-        # Send as two-frame: topic + payload (topic = peer name for filtering)
-        self._pub.send_multipart([peer.encode(), payload])
+        task_name = os.environ.get("DSF_TASK_NAME", "unknown")
+        self._pub.send_multipart([task_name.encode(), payload])
 
     def recv(self, peer: str | None = None) -> bytes:
         """Connect-SUB to the given peer's PUB socket and receive one message."""
@@ -117,6 +116,9 @@ class ZmqPubSubTransport:
         frames = self._sub[peer].recv_multipart()
         # Return the payload frame (second frame)
         return frames[1] if len(frames) == 2 else frames[0]
+
+    def recv_all(self) -> dict[str, bytes]:
+        raise NotImplementedError("recv_all() is not supported for pubsub transport")
 
     def close(self) -> None:
         if self._pub:

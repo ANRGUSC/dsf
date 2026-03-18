@@ -1,0 +1,401 @@
+# GPT-2 single-layer tensor-DAG (Sh=12).
+#
+# 27 nodes:
+#   qkv  -->  attn-shard-{0..11}  -->  attn-merge  -->  mlp-shard-{0..11}  -->  mlp-merge
+#
+# Pods are spread across anrg-2 … anrg-9 via node constraints.
+apiVersion: workflow.example.com/v1
+kind: DAG
+metadata:
+  name: gpt2-layer-dag
+spec:
+  steps:
+    # ── qkv (root) ──────────────────────────────────────────────
+    - name: qkv
+      image: mohammadalikh/gpt2-single-layer:qkv-v8
+      args: ["python /app/layer_node.py --role qkv --dag-name gpt2-layer-dag"]
+      dependencies: []
+      runtime: 5
+      dataSize: "98KB"
+      cpu: "500m"
+      memory: "512Mi"
+      constraints:
+        nodeNames:
+          - anrg-1
+          - anrg-3
+          - anrg-5
+
+    # ── 12 attention shards (parallel, each depends on qkv) ────
+    - name: attn-shard-0
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 0 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-1
+          - anrg-4
+          - anrg-6
+    - name: attn-shard-1
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 1 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-5
+          - anrg-7
+    - name: attn-shard-2
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 2 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-4
+          - anrg-6
+          - anrg-8
+    - name: attn-shard-3
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 3 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-5
+          - anrg-7
+          - anrg-9
+    - name: attn-shard-4
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 4 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-6
+          - anrg-8
+          - anrg-1
+    - name: attn-shard-5
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 5 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-7
+          - anrg-9
+          - anrg-3
+    - name: attn-shard-6
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 6 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-8
+          - anrg-1
+          - anrg-4
+    - name: attn-shard-7
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 7 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-9
+          - anrg-3
+          - anrg-5
+    - name: attn-shard-8
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 8 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-1
+          - anrg-5
+          - anrg-9
+    - name: attn-shard-9
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 9 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-6
+          - anrg-8
+    - name: attn-shard-10
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 10 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-4
+          - anrg-7
+          - anrg-9
+    - name: attn-shard-11
+      image: mohammadalikh/gpt2-single-layer:attn-shard-v8
+      args: ["python /app/layer_node.py --role attn-shard --shard-idx 11 --dag-name gpt2-layer-dag"]
+      dependencies: ["qkv"]
+      runtime: 6
+      dataSize: "4KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-5
+          - anrg-8
+          - anrg-1
+
+    # ── attention merge (depends on all 12 attn shards + qkv) ──
+    - name: attn-merge
+      image: mohammadalikh/gpt2-single-layer:attn-merge-v8
+      args: ["python /app/layer_node.py --role attn-merge --dag-name gpt2-layer-dag"]
+      dependencies:
+        - qkv
+        - attn-shard-0
+        - attn-shard-1
+        - attn-shard-2
+        - attn-shard-3
+        - attn-shard-4
+        - attn-shard-5
+        - attn-shard-6
+        - attn-shard-7
+        - attn-shard-8
+        - attn-shard-9
+        - attn-shard-10
+        - attn-shard-11
+      runtime: 6
+      dataSize: "50KB"
+      cpu: "500m"
+      memory: "512Mi"
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-4
+          - anrg-7
+
+    # ── 12 MLP shards (parallel, each depends on attn-merge) ───
+    - name: mlp-shard-0
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 0 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-5
+          - anrg-9
+    - name: mlp-shard-1
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 1 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-4
+          - anrg-6
+          - anrg-1
+    - name: mlp-shard-2
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 2 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-5
+          - anrg-7
+          - anrg-3
+    - name: mlp-shard-3
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 3 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-6
+          - anrg-8
+          - anrg-4
+    - name: mlp-shard-4
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 4 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-7
+          - anrg-9
+          - anrg-5
+    - name: mlp-shard-5
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 5 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-8
+          - anrg-1
+          - anrg-6
+    - name: mlp-shard-6
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 6 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-9
+          - anrg-3
+          - anrg-7
+    - name: mlp-shard-7
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 7 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-1
+          - anrg-4
+          - anrg-8
+    - name: mlp-shard-8
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 8 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-3
+          - anrg-6
+          - anrg-9
+    - name: mlp-shard-9
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 9 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-4
+          - anrg-7
+          - anrg-1
+    - name: mlp-shard-10
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 10 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-5
+          - anrg-8
+          - anrg-3
+    - name: mlp-shard-11
+      image: mohammadalikh/gpt2-single-layer:mlp-shard-v8
+      args: ["python /app/layer_node.py --role mlp-shard --shard-idx 11 --dag-name gpt2-layer-dag"]
+      dependencies: ["attn-merge"]
+      runtime: 7
+      dataSize: "10KB"
+      cpu: "250m"
+      memory: "256Mi"
+      constraints:
+        nodeNames:
+          - anrg-6
+          - anrg-9
+          - anrg-4
+
+    # ── MLP merge (depends on all 12 mlp shards + attn-merge) ──
+    - name: mlp-merge
+      image: mohammadalikh/gpt2-single-layer:mlp-merge-v8
+      args: ["python /app/layer_node.py --role mlp-merge --dag-name gpt2-layer-dag"]
+      dependencies:
+        - attn-merge
+        - mlp-shard-0
+        - mlp-shard-1
+        - mlp-shard-2
+        - mlp-shard-3
+        - mlp-shard-4
+        - mlp-shard-5
+        - mlp-shard-6
+        - mlp-shard-7
+        - mlp-shard-8
+        - mlp-shard-9
+        - mlp-shard-10
+        - mlp-shard-11
+      runtime: 5
+      dataSize: "25KB"
+      cpu: "500m"
+      memory: "512Mi"
+      constraints:
+        nodeNames:
+          - anrg-6
+          - anrg-8
+          - anrg-1
+
+  schedulerName: dag-scheduler
+  namespace: default

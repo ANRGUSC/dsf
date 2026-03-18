@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -259,18 +261,19 @@ func createTaskPod(client *kubernetes.Clientset, obj *unstructured.Unstructured,
 
 	// Get ZeroMQ config for this task
 	taskZMQ, _, _ := unstructured.NestedMap(task, "zeromq")
-	
-	// Build environment variables for ZeroMQ
-	envVars := buildZeroMQEnvVars(graphName, taskName, zeromqConfig, taskZMQ, namespace, replicaIndex)
+
+	// Build environment variables for ZeroMQ (pass task for throughputTarget)
+	envVars := buildZeroMQEnvVars(graphName, taskName, zeromqConfig, taskZMQ, task, namespace, replicaIndex)
 
 	// Build container
 	container := corev1.Container{
-		Name:      taskName,
-		Image:     image,
-		Command:   command,
-		Args:      args,
-		Resources: resources,
-		Env:       envVars,
+		Name:            taskName,
+		Image:           image,
+		ImagePullPolicy: corev1.PullAlways,
+		Command:         command,
+		Args:            args,
+		Resources:       resources,
+		Env:             envVars,
 	}
 
 	// Add ZeroMQ port if specified
@@ -338,8 +341,31 @@ func createTaskPod(client *kubernetes.Clientset, obj *unstructured.Unstructured,
 	log.Printf("Created pod %s/%s for task %s (replica %d)", namespace, podName, taskName, replicaIndex)
 }
 
+// parseBytesPerSecond parses strings like "12.5MB/s", "25MB/s", "100Mbps" and returns MB/s.
+func parseBytesPerSecond(s string) (float64, bool) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return 0, false
+	}
+	var mult float64 = 1
+	if strings.HasSuffix(s, "mbps") {
+		mult = 1.0 / 8.0 // bits to bytes
+		s = strings.TrimSuffix(s, "mbps")
+	} else if strings.HasSuffix(s, "mb/s") {
+		s = strings.TrimSuffix(s, "mb/s")
+	} else {
+		return 0, false
+	}
+	s = strings.TrimSpace(s)
+	var v float64
+	if _, err := fmt.Sscanf(s, "%f", &v); err != nil {
+		return 0, false
+	}
+	return v * mult, true
+}
+
 // Build ZeroMQ environment variables
-func buildZeroMQEnvVars(graphName, taskName string, globalZMQ, taskZMQ map[string]interface{}, namespace string, replicaIndex int) []corev1.EnvVar {
+func buildZeroMQEnvVars(graphName, taskName string, globalZMQ, taskZMQ map[string]interface{}, task map[string]interface{}, namespace string, replicaIndex int) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{}
 
 	// Topic prefix
@@ -422,6 +448,24 @@ func buildZeroMQEnvVars(graphName, taskName string, globalZMQ, taskZMQ map[strin
 	// Service name for discovery
 	serviceName := fmt.Sprintf("%s-%s-service", graphName, taskName)
 
+	// Throughput from task spec (default 100 Mbps = 12.5 MB/s)
+	targetMBps := "12.5"
+	rateMsgs := "100"
+	if task != nil {
+		if tt, ok := task["throughputTarget"].(map[string]interface{}); ok {
+			if bps, ok := tt["bytesPerSecond"].(string); ok {
+				if mbps, parsed := parseBytesPerSecond(bps); parsed && mbps > 0 {
+					targetMBps = strconv.FormatFloat(mbps, 'f', -1, 64)
+				}
+			}
+			if mps, ok := tt["messagesPerSecond"].(int64); ok && mps > 0 {
+				rateMsgs = strconv.FormatInt(mps, 10)
+			} else if mps, ok := tt["messagesPerSecond"].(int); ok && mps > 0 {
+				rateMsgs = strconv.Itoa(mps)
+			}
+		}
+	}
+
 	// Add environment variables
 	envVars = append(envVars,
 		corev1.EnvVar{Name: "ZMQ_GRAPH_NAME", Value: graphName},
@@ -434,9 +478,9 @@ func buildZeroMQEnvVars(graphName, taskName string, globalZMQ, taskZMQ map[strin
 		corev1.EnvVar{Name: "ZMQ_SERVICE_NAME", Value: serviceName},
 		corev1.EnvVar{Name: "ZMQ_NAMESPACE", Value: namespace},
 		corev1.EnvVar{Name: "ZMQ_REPLICA_INDEX", Value: fmt.Sprintf("%d", replicaIndex)},
-		// High throughput configuration for 100 MB/s
-		corev1.EnvVar{Name: "TARGET_DATA_RATE_MBPS", Value: "100"},
-		corev1.EnvVar{Name: "RATE", Value: "100"},
+		corev1.EnvVar{Name: "TARGET_DATA_RATE_MBPS", Value: targetMBps},
+		corev1.EnvVar{Name: "RATE", Value: rateMsgs},
+		corev1.EnvVar{Name: "PYTHONUNBUFFERED", Value: "1"},
 	)
 
 	// Publish topics as comma-separated

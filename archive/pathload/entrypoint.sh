@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 echo "Node Name: $NODE_NAME"
-
+echo "Node IP: $NODE_IP"
 if [[ "$1" == "-s" ]]; then
     while true; do
         mkdir -p /pathload_results

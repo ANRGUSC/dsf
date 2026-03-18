@@ -6,8 +6,8 @@ import (
 )
 
 // heftBandwidth is the measured cross-node throughput in bytes/second.
-// Derived from observation: merge task pushes 250 MB in ~6.5s ≈ 38 MB/s, rounded to 40 MB/s.
-const heftBandwidth = 40_000_000.0 // 40 MB/s
+// Measured: 500 MB transfers between cluster nodes average ~100 MB/s (~800 Mbps on 1 Gbps links).
+const heftBandwidth = 100_000_000.0 // 100 MB/s
 
 // heftAssignTasks implements the HEFT (Heterogeneous Earliest Finish Time) algorithm.
 //

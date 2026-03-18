@@ -110,25 +110,13 @@ func pollRunningODAGs(dynClient dynamic.Interface, client *kubernetes.Clientset)
 				return true
 			}
 			ns, name := parts[0], parts[1]
-			pods, err := client.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{
-				LabelSelector: fmt.Sprintf("%s=%s", labelODAGName, name),
-			})
-			if err != nil {
-				return true
-			}
-			raw, ok := assignmentCache.Load(k)
-			if !ok {
-				return true
-			}
-			assignMap := raw.(map[string]nodeInfo)
 			odagObj, err := dynClient.Resource(odagGVR).Namespace(ns).Get(
 				context.Background(), name, metav1.GetOptions{},
 			)
 			if err != nil {
 				return true
 			}
-			tasks := extractTasks(odagObj)
-			updateTaskStatuses(dynClient, ns, name, pods.Items, assignMap, tasks)
+			go processReadyTasks(dynClient, client, ns, name, odagObj.GetUID())
 			return true
 		})
 	}
@@ -311,11 +299,16 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 	for _, pod := range pods.Items {
 		taskName := pod.Labels[labelTaskName]
 		existingPods[taskName] = true
+		ni := assignMap[taskName]
 		switch pod.Status.Phase {
 		case corev1.PodSucceeded:
-			dataReadyTasks[taskName] = true
+			// In option-3 decoupled transfer, the pod exits before the data-agent
+			// push completes. Only mark DataReady once the data-agent confirms it.
+			// If data-agent is unreachable, fall back to ready so we don't get stuck.
+			if ni.ip == "" || isDataReady(ni.ip, odagName, taskName) {
+				dataReadyTasks[taskName] = true
+			}
 		case corev1.PodRunning:
-			ni := assignMap[taskName]
 			if ni.ip != "" && isDataReady(ni.ip, odagName, taskName) {
 				dataReadyTasks[taskName] = true
 			}
@@ -672,7 +665,7 @@ func isDataReady(nodeIP, odagName, taskName string) bool {
 		return false
 	}
 	state := strings.TrimSpace(string(body))
-	return state == "DataReady" || state == "Done"
+	return state == "DataReady"
 }
 
 // resetTaskState writes "Scheduled" to the data-agent before pod creation,
@@ -766,16 +759,7 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 			}
 		case corev1.PodSucceeded:
 			podPhase = "Succeeded"
-			ni := assignMap[taskName]
-			if ni.ip != "" {
-				if s := queryTaskState(ni.ip, odagName, taskName); s == "DataReady" || s == "Done" {
-					taskState = s
-				} else {
-					taskState = "Done"
-				}
-			} else {
-				taskState = "Done"
-			}
+			taskState = "Done" // pod exited cleanly; data-agent state irrelevant
 			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.State.Terminated != nil {
 					ts["completionTime"] = cs.State.Terminated.FinishedAt.UTC().Format(time.RFC3339)

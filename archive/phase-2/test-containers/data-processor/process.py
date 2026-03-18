@@ -31,23 +31,15 @@ if transport == "tcp":
     if bind:
         sub_address = f"tcp://*:{port}"
     else:
-        # For connect, use service discovery to find publisher
+        # Connect to publisher service via Kubernetes DNS (service name: {graph-name}-{task-name}-service)
         namespace = os.getenv("ZMQ_NAMESPACE", "default")
-        # Connect to publisher service (data-source)
-        # Get the first subscribe topic to determine which task to connect to
         if subscribe_topics:
-            # Extract task name from topic (e.g., "test-task-graph/data-source/raw" -> "data-source")
             first_topic = subscribe_topics[0].strip()
             parts = first_topic.split("/")
-            if len(parts) >= 2:
-                publisher_task = parts[1]  # e.g., "data-source"
-            else:
-                publisher_task = "data-source"  # default
+            publisher_task = parts[1] if len(parts) >= 2 else "data-source"
         else:
-            publisher_task = "data-source"  # default
-        
+            publisher_task = "data-source"
         publisher_service = f"{graph_name}-{publisher_task}-service"
-        # Use default port 5555 for publisher (or get from env if available)
         publisher_port = 5555
         sub_address = f"tcp://{publisher_service}.{namespace}.svc.cluster.local:{publisher_port}"
 elif transport == "ipc":
@@ -85,12 +77,18 @@ if publish_topics:
 
 print(f"[{task_name}] Ready to process messages...")
 
+# Data rate measurement (data-source -> data-processor)
+measure_interval = float(os.getenv("RATE_MEASURE_INTERVAL_SEC", "5.0"))
+start_time = time.time()
+
 try:
     processed_count = 0
     last_log_time = time.time()
+    last_log_count = 0
     bytes_received_since_log = 0
-    start_time = time.time()
     total_bytes = 0
+
+    print(f"[{task_name}] Data rate measurement interval: {measure_interval}s (from data-source)")
     
     while True:
         try:
@@ -120,12 +118,15 @@ try:
             # Log less frequently for high throughput
             current_time = time.time()
             elapsed_since_log = current_time - last_log_time
-            if elapsed_since_log >= 5.0 or processed_count % 1000 == 0:
+            if elapsed_since_log >= measure_interval or processed_count % 1000 == 0:
                 avg_msg_size_kb = (total_bytes / processed_count) / 1024 if processed_count > 0 else 0
                 rate_mbps = (bytes_received_since_log / elapsed_since_log) / (1024 * 1024) if elapsed_since_log > 0 else 0
-                print(f"[{task_name}] Received message {processed_count} from {message.get('task', 'unknown')} | "
-                      f"Avg size: ~{avg_msg_size_kb:.2f} KB/msg | Current rate: ~{rate_mbps:.2f} MB/s")
+                window_msgs = processed_count - last_log_count
+                window_msgps = window_msgs / elapsed_since_log if elapsed_since_log > 0 else 0
+                print(f"[{task_name}] DATA RATE (from data-source): {rate_mbps:.2f} MB/s, {window_msgps:.1f} msg/s | "
+                      f"total {processed_count} msgs, ~{avg_msg_size_kb:.2f} KB/msg")
                 last_log_time = current_time
+                last_log_count = processed_count
                 bytes_received_since_log = 0
             
             # Process the message (simulate processing)
@@ -144,7 +145,7 @@ try:
                     if pub_topic.strip():
                         pub_socket.send_multipart([pub_topic.encode(), json.dumps(processed_message).encode()])
                         if processed_count % 1000 == 0:
-                        print(f"[{task_name}] Published processed message to {pub_topic}")
+                            print(f"[{task_name}] Published processed message to {pub_topic}")
             
         except zmq.Again:
             # No message available, continue
@@ -156,6 +157,11 @@ try:
 except KeyboardInterrupt:
     print(f"\n[{task_name}] Shutting down...")
 finally:
+    if processed_count > 0 and total_bytes > 0:
+        elapsed_total = time.time() - start_time
+        avg_mbps = (total_bytes / (1024 * 1024)) / elapsed_total if elapsed_total > 0 else 0
+        avg_msgps = processed_count / elapsed_total if elapsed_total > 0 else 0
+        print(f"[{task_name}] DATA RATE SUMMARY (from data-source): {total_bytes / (1024*1024):.2f} MB, {processed_count} msgs in {elapsed_total:.1f}s -> avg {avg_mbps:.2f} MB/s, {avg_msgps:.1f} msg/s")
     sub_socket.close()
     if pub_socket:
         pub_socket.close()

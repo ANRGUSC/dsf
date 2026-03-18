@@ -28,7 +28,7 @@ spec:
       command: ["python", "task.py"]
       dependencies: []
       dataSize: "30MB"    # observed output: 30 000 311 bytes
-      runtime: 4          # observed wall-clock time (seconds)
+      runtime: 2          # observed wall-clock time (seconds)
       resources:
         cpu: "300m"
         memory: "256Mi"
@@ -54,7 +54,7 @@ spec:
       command: ["python", "task.py"]
       dependencies: ["source-a", "transform", "source-b"]
       dataSize: "250MB"   # observed output: 250 001 217 bytes
-      runtime: 11         # observed wall-clock time (seconds)
+      runtime: 6          # observed wall-clock time (seconds)
       resources:
         cpu: "500m"
         memory: "2Gi"
@@ -67,7 +67,7 @@ spec:
       command: ["python", "task.py"]
       dependencies: ["merge"]
       dataSize: "0"
-      runtime: 6          # observed wall-clock time (seconds)
+      runtime: 4          # observed wall-clock time (seconds)
       resources:
         cpu: "300m"
         memory: "1Gi"

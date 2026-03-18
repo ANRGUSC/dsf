@@ -69,9 +69,19 @@ rate = int(os.getenv("RATE", "100"))  # messages per second target
 target_data_rate_mbps = float(os.getenv("TARGET_DATA_RATE_MBPS", "100"))  # Target data rate in MB/s
 message_size_bytes = int(os.getenv("MESSAGE_SIZE_BYTES", str(int(target_data_rate_mbps * 1024 * 1024 / rate))))  # Calculate message size to achieve target rate
 
+# Data rate measurement (data-source -> data-processor)
+measure_interval = float(os.getenv("RATE_MEASURE_INTERVAL_SEC", "5.0"))
+rate_window_start = time.time()
+rate_window_bytes = 0
+rate_window_msgs = 0
+total_bytes_sent = 0
+
 print(f"[{task_name}] Starting to publish data at ~{rate} msg/s")
 print(f"[{task_name}] Target data rate: {target_data_rate_mbps} MB/s")
 print(f"[{task_name}] Message size: {message_size_bytes} bytes (~{message_size_bytes/1024:.2f} KB)")
+print(f"[{task_name}] Data rate measurement interval: {measure_interval}s")
+
+start_time = time.time()
 
 # Pre-generate padding data to reach target message size
 def create_message_with_size(counter_val, target_size):
@@ -99,9 +109,23 @@ try:
             if topic.strip():
                 message_json = create_message_with_size(counter, message_size_bytes)
                 message_bytes = message_json.encode()
+                frame_size = len(topic.encode()) + len(message_bytes)
                 # PUB pattern: send topic first, then message
                 socket.send_multipart([topic.encode(), message_bytes])
                 counter += 1
+                total_bytes_sent += frame_size
+                rate_window_bytes += frame_size
+                rate_window_msgs += 1
+                # Periodic data rate report (data-source -> data-processor)
+                now = time.time()
+                if now - rate_window_start >= measure_interval:
+                    elapsed = now - rate_window_start
+                    mbps = (rate_window_bytes / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+                    msgps = rate_window_msgs / elapsed if elapsed > 0 else 0
+                    print(f"[{task_name}] DATA RATE (send to data-processor): {mbps:.2f} MB/s, {msgps:.1f} msg/s (window {elapsed:.1f}s)")
+                    rate_window_start = now
+                    rate_window_bytes = 0
+                    rate_window_msgs = 0
                 if counter % 100 == 0:
                     print(f"[{task_name}] Published to {topic}: message {counter} ({len(message_bytes)} bytes)")
         
@@ -111,6 +135,18 @@ try:
             message_bytes = message_json.encode()
             socket.send(message_bytes)
             counter += 1
+            total_bytes_sent += len(message_bytes)
+            rate_window_bytes += len(message_bytes)
+            rate_window_msgs += 1
+            now = time.time()
+            if now - rate_window_start >= measure_interval:
+                elapsed = now - rate_window_start
+                mbps = (rate_window_bytes / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+                msgps = rate_window_msgs / elapsed if elapsed > 0 else 0
+                print(f"[{task_name}] DATA RATE (send to data-processor): {mbps:.2f} MB/s, {msgps:.1f} msg/s (window {elapsed:.1f}s)")
+                rate_window_start = now
+                rate_window_bytes = 0
+                rate_window_msgs = 0
             if counter % 100 == 0:
                 print(f"[{task_name}] Published message {counter} ({len(message_bytes)} bytes)")
         
@@ -132,5 +168,10 @@ try:
 except KeyboardInterrupt:
     print(f"\n[{task_name}] Shutting down...")
 finally:
+    if counter > 0 and total_bytes_sent > 0:
+        elapsed_total = time.time() - start_time
+        avg_mbps = (total_bytes_sent / (1024 * 1024)) / elapsed_total if elapsed_total > 0 else 0
+        avg_msgps = counter / elapsed_total if elapsed_total > 0 else 0
+        print(f"[{task_name}] DATA RATE SUMMARY: {total_bytes_sent / (1024*1024):.2f} MB, {counter} msgs in {elapsed_total:.1f}s -> avg {avg_mbps:.2f} MB/s, {avg_msgps:.1f} msg/s")
     socket.close()
     context.term()

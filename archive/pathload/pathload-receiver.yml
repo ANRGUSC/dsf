@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pathload-receiver
+  labels:
+    app.kubernetes.io/name: Receiver
+spec:
+  hostNetwork: true
+  containers:
+  - name: pathload-d
+    image: pathload-d:latest
+    imagePullPolicy: IfNotPresent
+    command: ["/usr/local/bin/entrypoint.sh"]
+    args: ["-r"]
+    - env:
+      - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+      - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+

@@ -4,15 +4,21 @@ FileTransport: push-based p2p file transport for one-shot ODAGs.
 Flow
 ----
 send(payload):
-    1. Signal state = Sending to the local data-agent.
-    2. Write payload to this task's local hostPath output file.
-    3. For each successor task on a *different* node: HTTP PUT the payload
-       to the data-agent running on that node.
-    4. Signal state = DataReady to the local data-agent.
+    1. Write payload to this task's local hostPath output file.
+    2. POST /push/<odag>/<task> to the local data-agent with the list of
+       remote (cross-node) successors. The data-agent handles the transfer
+       in a background goroutine and sets DataReady when done.
+    3. Return immediately — the task pod can continue and exit without waiting.
 
 recv(peer) / recv_all():
     Always a local file read. The odag-controller starts a task pod only
     after all upstream deps are DataReady, so the file is guaranteed present.
+
+close():
+    Sets state=Done and returns. The pod exits immediately regardless of
+    whether the data-agent transfer is still in progress (option-3 decoupled
+    transfer). The data-agent completes the push independently from the
+    local file on the hostPath.
 
 State protocol
 --------------
@@ -20,16 +26,13 @@ Tasks signal their state to the local data-agent (reachable at DSF_NODE_IP:
 8081) via PUT /state/<odag>/<task>. The controller queries this endpoint to
 decide when to start downstream tasks (DataReady trigger, not PodSucceeded).
 
-States signalled by the SDK:
-    Running     — on FileTransport.__init__()
-    Sending     — at the start of send()
-    DataReady   — after all pushes in send() complete
+States set by the SDK:
+    Executing   — on FileTransport.__init__()
+    Done        — on close()
 
-States derived by the controller from pod events:
-    Pending     — no pod yet
-    Scheduled   — pod created, not yet Running
-    Succeeded   — pod exited 0
-    Failed      — pod exited non-0 or send() raised
+States set by the data-agent (after /push/ completes):
+    DataReady   — all remote pushes succeeded
+    Failed      — one or more pushes failed after retries
 
 Environment variables injected by odag-controller
 --------------------------------------------------
@@ -47,27 +50,23 @@ Environment variables injected by odag-controller
     (<SUCC> is the task name uppercased with hyphens replaced by underscores)
 """
 
+import json
 import os
-import threading
-import time
-import urllib.error
 import urllib.request
 
 
 _DATA_AGENT_PORT = 8081
-_PUSH_RETRIES = 5
-_PUSH_RETRY_DELAY = 0.5  # seconds
 
 
 class FileTransport:
     """
     File-based transport for one-shot (ODAG) task graphs.
 
-    send(payload)       — write output and push to all remote successor nodes.
-    recv(peer)          — read a specific upstream dep's output (local file).
-    recv(peer=None)     — shorthand when there is exactly one dep.
-    recv_all()          — read all deps; returns {dep_name: bytes}.
-    close()             — no-op (nothing to close).
+    send(payload)   — write output locally and hand off remote pushes to the
+                      data-agent; returns immediately (non-blocking).
+    recv(peer)      — read a specific upstream dep's output (local file).
+    recv_all()      — read all deps; returns {dep_name: bytes}.
+    close()         — signal Done and exit; transfer continues in data-agent.
     """
 
     def __init__(self) -> None:
@@ -76,31 +75,13 @@ class FileTransport:
         self.output_dir: str = os.environ["DSF_OUTPUT_DIR"]
         self.node_name: str = os.environ.get("NODE_NAME", "")
         self.node_ip: str = os.environ.get("DSF_NODE_IP", "")
-        self._send_thread: threading.Thread | None = None
         self._set_state("Executing")
 
     # ------------------------------------------------------------------ #
     # state protocol                                                        #
     # ------------------------------------------------------------------ #
 
-    def _set_sending(self, sending: bool) -> None:
-        if not self.node_ip:
-            return
-        url = f"http://{self.node_ip}:{_DATA_AGENT_PORT}/sending/{self.odag_name}/{self.task_name}"
-        try:
-            body = b"true" if sending else b"false"
-            req = urllib.request.Request(url, data=body, method="PUT")
-            with urllib.request.urlopen(req, timeout=5):
-                pass
-        except Exception as e:
-            print(f"[{self.task_name}] WARNING: failed to set sending={sending}: {e}", flush=True)
-
     def _set_state(self, state: str) -> None:
-        """
-        Signal this task's current state to the local data-agent via
-        PUT /state/<odag>/<task>.  Failures are logged but never fatal —
-        the task's work must not be blocked by a state reporting glitch.
-        """
         if not self.node_ip:
             return
         url = f"http://{self.node_ip}:{_DATA_AGENT_PORT}/state/{self.odag_name}/{self.task_name}"
@@ -117,75 +98,58 @@ class FileTransport:
 
     def send(self, payload: bytes) -> None:
         """
-        Write payload to this task's local output file and push to every remote
-        successor node in a background thread, then return immediately so the
-        task can continue running in parallel with the transfer.
-
-        state=Sending is set before the thread starts (visible to controller
-        right away). The thread sets state=DataReady when all pushes complete.
-        close() joins the thread before setting state=Succeeded.
+        Write payload locally and ask the data-agent to push to remote successors.
+        Returns immediately — the data-agent handles the transfer independently.
         """
-        self._set_sending(True)
+        # 1. Write to local hostPath (covers same-node successors and our own storage).
+        os.makedirs(self.output_dir, exist_ok=True)
+        output_path = os.path.join(self.output_dir, "output")
+        with open(output_path, "wb") as f:
+            f.write(payload)
+        print(
+            f"[{self.task_name}] wrote {len(payload)} bytes to {output_path}",
+            flush=True,
+        )
 
-        def _transfer() -> None:
-            # 1. Local write — covers same-node successors and our own storage.
-            os.makedirs(self.output_dir, exist_ok=True)
-            output_path = os.path.join(self.output_dir, "output")
-            with open(output_path, "wb") as f:
-                f.write(payload)
-            print(
-                f"[{self.task_name}] wrote {len(payload)} bytes to {output_path}",
-                flush=True,
-            )
-
-            # 2. Push to each remote successor node.
-            succs_env = os.environ.get("DSF_SUCCESSORS", "")
-            for succ in [s for s in succs_env.split(",") if s]:
-                succ_key = succ.upper().replace("-", "_")
-                succ_node = os.environ.get(f"DSF_SUCC_{succ_key}_NODE", "")
-                succ_host = os.environ.get(f"DSF_SUCC_{succ_key}_HOST", "")
-
-                if succ_node == self.node_name:
-                    # Same node — local file already covers this successor.
-                    continue
-
-                if not succ_host:
-                    print(
-                        f"[{self.task_name}] WARNING: no host for successor {succ}; skipping push",
-                        flush=True,
-                    )
-                    continue
-
-                self._push(succ, succ_host, payload)
-
-            # 3. All pushes complete — data is ready on every successor node.
-            self._set_sending(False)
-            self._set_state("DataReady")
-
-        self._send_thread = threading.Thread(target=_transfer, daemon=True)
-        self._send_thread.start()
-
-    def _push(self, succ: str, host: str, payload: bytes) -> None:
-        """HTTP PUT payload to the data-agent on the destination node."""
-        url = f"http://{host}:{_DATA_AGENT_PORT}/{self.odag_name}/{self.task_name}/output"
-        print(f"[{self.task_name}] pushing to {succ} at {url} ({len(payload)} bytes)", flush=True)
-
-        for attempt in range(1, _PUSH_RETRIES + 1):
-            try:
-                req = urllib.request.Request(url, data=payload, method="PUT")
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    if resp.status == 200:
-                        print(f"[{self.task_name}] push to {succ} OK", flush=True)
-                        return
-            except Exception as e:
+        # 2. Build list of cross-node successors for the data-agent to push to.
+        succs_env = os.environ.get("DSF_SUCCESSORS", "")
+        successors = []
+        for succ in [s for s in succs_env.split(",") if s]:
+            succ_key = succ.upper().replace("-", "_")
+            succ_node = os.environ.get(f"DSF_SUCC_{succ_key}_NODE", "")
+            succ_host = os.environ.get(f"DSF_SUCC_{succ_key}_HOST", "")
+            if succ_node == self.node_name:
+                continue  # same-node: file already present on shared hostPath
+            if not succ_host:
                 print(
-                    f"[{self.task_name}] push to {succ} attempt {attempt}/{_PUSH_RETRIES} failed: {e}",
+                    f"[{self.task_name}] WARNING: no host for successor {succ}; skipping",
                     flush=True,
                 )
-                if attempt < _PUSH_RETRIES:
-                    time.sleep(_PUSH_RETRY_DELAY)
+                continue
+            successors.append({"name": succ, "host": succ_host})
 
-        raise RuntimeError(f"[{self.task_name}] failed to push output to successor {succ} after {_PUSH_RETRIES} attempts")
+        # 3. Hand off to data-agent (responds 200 immediately, pushes in background).
+        self._request_push(successors)
+
+    def _request_push(self, successors: list) -> None:
+        if not self.node_ip:
+            return
+        url = f"http://{self.node_ip}:{_DATA_AGENT_PORT}/push/{self.odag_name}/{self.task_name}"
+        body = json.dumps({"successors": successors}).encode()
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+            print(
+                f"[{self.task_name}] handed off push to data-agent "
+                f"({len(successors)} remote successor(s))",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[{self.task_name}] WARNING: failed to request push: {e}", flush=True)
 
     # ------------------------------------------------------------------ #
     # recv                                                                  #
@@ -194,9 +158,6 @@ class FileTransport:
     def recv(self, peer: str | None = None) -> bytes:
         """
         Read the output of an upstream dependency from the local hostPath.
-
-        If peer is None, DSF_DEPS must contain exactly one entry.
-        Raises RuntimeError if there are multiple deps and no peer is given.
         """
         if peer is None:
             deps = [d for d in os.environ.get("DSF_DEPS", "").split(",") if d]
@@ -216,11 +177,7 @@ class FileTransport:
         return data
 
     def recv_all(self) -> dict[str, bytes]:
-        """
-        Read outputs from all upstream dependencies.
-
-        Returns a dict mapping dependency name -> bytes.
-        """
+        """Read outputs from all upstream dependencies."""
         deps = [d for d in os.environ.get("DSF_DEPS", "").split(",") if d]
         if not deps:
             raise RuntimeError("recv_all() called but DSF_DEPS is empty")
@@ -231,6 +188,9 @@ class FileTransport:
     # ------------------------------------------------------------------ #
 
     def close(self) -> None:
-        if self._send_thread is not None:
-            self._send_thread.join()
-        self._set_state("Done")
+        """
+        Return immediately. The pod exits.
+        The data-agent sets DataReady independently once the push completes.
+        For leaf tasks (no send()), downstream scheduling uses PodSucceeded directly.
+        """
+        pass
