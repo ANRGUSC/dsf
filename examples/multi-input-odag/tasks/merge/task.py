@@ -19,6 +19,20 @@ from dsf_sdk import DSFTask
 
 task = DSFTask()
 
+# --- helper properties smoke-test ---
+print(f"[{task.name}] node             : {task.node}", flush=True)
+print(f"[{task.name}] dependencies     : {task.dependencies}", flush=True)
+print(f"[{task.name}] successors       : {task.successors}", flush=True)
+print(f"[{task.name}] is_root          : {task.is_root}", flush=True)
+print(f"[{task.name}] is_leaf          : {task.is_leaf}", flush=True)
+print(f"[{task.name}] expected_runtime : {task.expected_runtime}s", flush=True)
+print(f"[{task.name}] expected_data_size: {task.expected_data_size} bytes", flush=True)
+for dep in task.dependencies:
+    dn = task.dep_node(dep)
+    locality = "same-node" if dn == task.node else "cross-node"
+    print(f"[{task.name}] dep_node({dep}) -> {dn} ({locality})", flush=True)
+# ------------------------------------
+
 DATA_SIZE = int(os.environ.get("DSF_DATA_SIZE", "250000000"))
 
 print(f"[{task.name}] reading all inputs via recv_all()", flush=True)
