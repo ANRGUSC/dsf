@@ -185,7 +185,53 @@ The trade-off (tighter coupling, no message persistence) is itself an
 interesting research discussion.
 
 ------------------------------------------------------------------------------
-3.6  Constraint-Aware Scheduling for Heterogeneous Edge     [MODERATE NOVELTY]
+3.6  Network-Aware Scheduling over Network-Oblivious        [STRONG NOVELTY]
+------------------------------------------------------------------------------
+
+Edge clusters have fundamentally asymmetric and variable network topologies:
+WiFi vs. Ethernet links, same-rack vs. cross-rack hops, and bandwidth that
+can differ by 10-100x between node pairs. Standard K8s schedulers and
+existing workflow systems (Argo, Airflow, Tekton) are network-oblivious —
+they treat all nodes as equidistant and ignore inter-node bandwidth when
+placing tasks.
+
+DSF's architecture is uniquely positioned to exploit network awareness:
+
+  - The HEFT algorithm (pkg/scheduler/heft.go) already models communication
+    cost as dataSize / bandwidth, and zeroes it out when predecessor and
+    successor are co-located on the same node (line 131-134). Currently it
+    uses a flat 100 Mbps constant, but the structure supports a full
+    bandwidth matrix.
+
+  - The data-agent's per-node deployment gives a natural measurement point:
+    each agent can profile transfer rates to peer agents, building a live
+    bandwidth matrix without any external tooling.
+
+  - The per-child-node DataReady mechanism (Section 3.2) means that
+    scheduling decisions already account for actual data arrival time,
+    not assumed transfer time. Network-aware placement reduces the gap
+    between HEFT's predicted makespan and the actual makespan.
+
+  - The constraint system (constraints.nodeNames) provides hard placement
+    boundaries, while network-aware HEFT provides soft optimization within
+    those boundaries — the two compose naturally.
+
+When a DAG has high CCR (communication-to-computation ratio), the choice of
+which node runs which task is dominated by network topology. A network-aware
+scheduler that places communicating tasks on high-bandwidth links (or
+co-locates them) can dramatically reduce makespan compared to a network-
+oblivious one that treats all placements as equivalent. This is especially
+impactful on edge clusters where link quality varies widely — a scenario
+that cloud-centric systems never encounter because cloud networks are
+relatively uniform.
+
+The key claim: network-aware HEFT scheduling, fed by measured inter-node
+bandwidth, produces significantly better makespan than network-oblivious
+HEFT (flat bandwidth assumption) or random placement — and the improvement
+grows with CCR. This is directly testable (see Experiment 6).
+
+------------------------------------------------------------------------------
+3.7  Constraint-Aware Scheduling for Heterogeneous Edge     [MODERATE NOVELTY]
 ------------------------------------------------------------------------------
 
 The constraints.nodeNames system combined with HEFT (reference impl) targets
@@ -196,7 +242,7 @@ scheduler interface (api/scheduler/schema.json) enables researchers to swap
 in custom algorithms.
 
 ------------------------------------------------------------------------------
-3.7  SDK Abstraction Quality                                [MINOR NOVELTY]
+3.8  SDK Abstraction Quality                                [MINOR NOVELTY]
 ------------------------------------------------------------------------------
 
 The DSFTask API is notable for its simplicity:
@@ -219,7 +265,7 @@ This is comparable to Dask's @delayed or Ray's @remote, but at the container
 boundary rather than within a single runtime.
 
 ------------------------------------------------------------------------------
-3.8  Simultaneous Pod Launch with Blocking Receive          [MINOR NOVELTY]
+3.9  Simultaneous Pod Launch with Blocking Receive          [MINOR NOVELTY]
      (CDAG mode / legacy ODAG mode)
 ------------------------------------------------------------------------------
 
@@ -227,6 +273,17 @@ For CDAGs: all pods start simultaneously; downstream tasks block on recv()
 until upstream publishes. This avoids the complexity of a topological-order
 launcher and leverages ZMQ's connection buffering. Worth mentioning but not
 a paper-level contribution on its own.
+
+Summary of novelty claims (9 total, 4 strong):
+  [STRONG]   3.1 Decoupled Compute-Transfer Pipeline
+  [STRONG]   3.2 Per-Child-Node DataReady Scheduling
+  [STRONG]   3.5 Brokerless Direct Communication
+  [STRONG]   3.6 Network-Aware over Network-Oblivious Scheduling
+  [MODERATE] 3.3 Data-Agent as Decoupled Data Plane
+  [MODERATE] 3.4 Unified Batch + Streaming Model
+  [MODERATE] 3.7 Constraint-Aware Heterogeneous Scheduling
+  [MINOR]    3.8 SDK Abstraction Quality
+  [MINOR]    3.9 Simultaneous Pod Launch
 
 
 ================================================================================
@@ -646,10 +703,36 @@ Suggested section outline:
   6. Conclusion
 
 Strongest venue fit:
-  - ACM SEC (Symposium on Edge Computing)
+
+  Top-tier systems / networking (high bar, but the decoupled transfer +
+  DataReady scheduling story could land if the evaluation is thorough):
+  - USENIX NSDI — strongest fit if framed as a new data-plane architecture
+    for containerized DAGs. NSDI values novel network-level mechanisms; the
+    data-agent peer-to-peer transfer, per-child-node DataReady scheduling,
+    and network-aware HEFT angle map well. Emphasize measured bandwidth
+    matrix, real edge cluster, and head-to-head vs. Argo/Airflow.
+  - USENIX OSDI / SOSP — highest bar. Would need to demonstrate the
+    decoupled compute-transfer mechanism as a general principle (not just
+    DSF-specific), with large-scale evaluation and a compelling argument
+    that this changes how people build workflow systems. Possible if the
+    evaluation covers diverse workloads and the pipelining gains are large.
+  - ACM CoNEXT — good fit for the network-aware scheduling angle. CoNEXT
+    appreciates measurement-driven work; profiling real inter-node bandwidth
+    on an edge cluster and showing it matters for scheduling is the kind of
+    result they publish. The brokerless direct communication story also fits.
+
+  Strong fit (realistic targets):
+  - ACM SEC (Symposium on Edge Computing) — natural home for edge-native
+    container orchestration with heterogeneous scheduling.
   - IEEE/ACM CCGrid (Cluster, Cloud and Grid Computing)
   - ACM/IFIP Middleware
   - ACM HPDC (if positioned as container-era analog of non-blocking MPI sends)
+  - USENIX ATC — good for systems papers with strong evaluation
+
+  Workshop / shorter venues (for early results):
+  - HotEdge (USENIX)
+  - EdgeSys (ACM)
+  - SoCC (ACM Symposium on Cloud Computing)
 
 The decoupled compute-transfer mechanism with per-child-node DataReady
 scheduling is the strongest and most differentiating contribution. Experiments
