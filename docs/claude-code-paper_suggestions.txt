@@ -1,0 +1,688 @@
+================================================================================
+DSF — Distributed Scheduling Framework
+Research Novelty Assessment & Experimental Evaluation Suggestions
+================================================================================
+
+Based on comprehensive analysis of README.md, docs/architecture.md, docs/PLAN.md,
+docs/sdk-quickstart.md, sdk/python/dsf_sdk/api.py, sdk/python/dsf_sdk/transport/
+file.py, cmd/data-agent/main.go, cmd/odag-controller/main.go, and
+pkg/scheduler/heft.go.
+
+================================================================================
+PART 1: SYSTEM OVERVIEW (IN RESEARCH TERMS)
+================================================================================
+
+DSF is a Kubernetes-native DAG execution framework for heterogeneous edge
+clusters (k3s) that:
+
+  - Unifies batch (ODAG) and streaming (CDAG) pipelines under a single
+    abstraction, CLI, SDK, and observability stack.
+
+  - Uses brokerless, direct inter-task communication: file-based transport
+    with per-node data-agents for ODAGs; ZeroMQ PUB/SUB for CDAGs.
+
+  - Implements constraint-aware task placement with a pluggable scheduler
+    interface (HEFT reference implementation included).
+
+  - Decouples compute from data transfer: task pods exit after computation;
+    a node-local data-agent handles cross-node file delivery independently.
+
+  - Schedules downstream tasks based on per-child-node DataReady signals
+    (data arrival on the child's node), not upstream pod completion.
+
+
+================================================================================
+PART 2: WHAT THE README UNDERSTATES — THE SDK/DATA-AGENT LAYER
+================================================================================
+
+The README describes ODAGs as "all pods start simultaneously" with "ZMQ
+PUSH/PULL" communication. The actual implementation, revealed by the SDK
+quickstart and transport code, is fundamentally different and more interesting:
+
+  Aspect                    README implies           Actual implementation
+  -------------------------------------------------------------------------
+  Transport (ODAG)          ZMQ PUSH/PULL            File-based + data-agent HTTP
+  Pod launch (ODAG)         All simultaneously       Layer-by-layer, gated by DataReady
+  Scheduling trigger        Pod starts after deps    Pod starts after deps' DATA
+                            succeed                  ARRIVES ON THE CHILD'S NODE
+  Compute/transfer          Implicit (ZMQ blocks)    Decoupled: task exits, data-agent
+  coupling                                           transfers independently
+
+This distinction is critical for the paper — the actual model is significantly
+more novel than what the README conveys.
+
+
+================================================================================
+PART 3: NOVELTY ASSESSMENT
+================================================================================
+
+------------------------------------------------------------------------------
+3.1  Decoupled Compute-Transfer Pipeline                    [STRONG NOVELTY]
+------------------------------------------------------------------------------
+
+This is the most publishable idea in the system.
+
+The execution flow for an ODAG task:
+
+  Task A computes
+    -> writes output to local hostPath
+    -> POSTs /push to local data-agent (responds 200 immediately)
+    -> task pod EXITS (CPU/memory released)
+
+  Meanwhile, in the background:
+    data-agent reads local file
+    HTTP PUTs to each remote successor's node agent (with 5 retries, 500ms backoff)
+    Sets DataReady on each destination node upon successful delivery
+
+  Controller polls DataReady on child's node
+    -> launches child task pod when data is confirmed present
+
+The task pod's lifetime equals ONLY its compute phase. It does not wait for
+data delivery. The data-agent completes the transfer independently, even after
+the pod has exited. This is a form of compute-communication overlap that:
+
+  - Frees cluster resources faster (pod exits -> CPU/memory released, even
+    while data is still in flight).
+
+  - Enables pipelining across DAG layers (layer N's compute and layer N-1's
+    data transfer can overlap).
+
+  - Is distinct from Argo Workflows (artifacts must be fully written to
+    S3/GCS before successors start) and Airflow (XCom goes through the DB
+    before the next task reads it).
+
+In classic HPC/distributed systems terminology, this is non-blocking send
+with deferred data delivery — but implemented at the container orchestration
+level with a node-local agent as the data plane.
+
+------------------------------------------------------------------------------
+3.2  Per-Child-Node DataReady Scheduling                    [STRONG NOVELTY]
+------------------------------------------------------------------------------
+
+The controller does not check "has the parent succeeded?" — it checks "has the
+parent's DATA ARRIVED ON THIS SPECIFIC CHILD'S NODE?" (isDataReady() at
+odag-controller/main.go:332).
+
+Concrete example:
+  Task A produces output.
+  Successor B is on the SAME node as A.
+  Successor C is on a DIFFERENT node.
+
+  -> B starts IMMEDIATELY after A's local write (shared hostPath, zero transfer)
+  -> C starts ONLY AFTER the data-agent pushes A's output to C's node
+
+This is data-locality-aware scheduling at the individual successor level.
+It is more fine-grained than:
+
+  - Argo: successor starts after artifact is in object storage (no locality)
+  - Spark: shuffle data goes through a shuffle service (locality-aware but
+    within the framework's own runtime, not at the container level)
+  - Airflow: successor starts after XCom write completes (centralized DB)
+
+Practical implication: same-node successors experience zero data transfer
+latency while cross-node successors wait only for the actual network
+transfer — not for the producer task to exit.
+
+------------------------------------------------------------------------------
+3.3  Data-Agent as a Decoupled Data Plane                   [MODERATE NOVELTY]
+------------------------------------------------------------------------------
+
+The data-agent DaemonSet (one per node) acts as a node-local data plane
+separate from the control plane (controller):
+
+  Control Plane (odag-controller):   queries GET /state/ -> decides when to launch pods
+  Data Plane (data-agent per node):  handles POST /push/ -> HTTP transfer -> sets DataReady
+  Task SDK:                          writes local file -> POSTs /push -> exits
+
+The state protocol (Executing -> DataReady -> Done -> Failed) is a lightweight
+coordination mechanism that avoids polling the K8s API for data readiness.
+The controller queries the data-agent directly on each node's IP — this is
+O(1) per node rather than going through the K8s API server.
+
+This separation has precedent in Mesos (two-level scheduling) and Kubernetes
+itself (kubelet as node agent), but applying it specifically to inter-task
+data routing in a DAG framework is novel.
+
+------------------------------------------------------------------------------
+3.4  Unified Batch + Streaming DAG Model on Kubernetes      [MODERATE NOVELTY]
+------------------------------------------------------------------------------
+
+Most comparable systems specialize: Argo Workflows / Airflow / Tekton do
+batch; Flink / Kafka Streams do streaming. DSF unifies both (ODAG + CDAG)
+under the same SDK (send/recv), CLI, and observability stack, with the
+transport pattern (file vs. PUB/SUB) selected automatically.
+
+The user-facing SDK is identical for both modes:
+
+  task = DSFTask()
+  data = task.recv("upstream")
+  result = process(data)
+  task.send(result)
+  task.close()
+
+Apache Beam attempted a similar unification but at the programming model
+level, not at the container orchestration level. DSF does it at the
+container boundary — each task is an isolated container, no shared memory,
+no shared runtime, no language coupling.
+
+------------------------------------------------------------------------------
+3.5  Brokerless Direct Communication for K8s Workflows      [STRONG NOVELTY]
+------------------------------------------------------------------------------
+
+Existing K8s workflow systems rely on:
+  - Shared storage (Argo artifacts, Airflow XCom, NFS volumes)
+  - Message brokers (Kafka, RabbitMQ, MQTT)
+
+DSF eliminates both. ODAGs use file-based peer-to-peer transfer via
+data-agents; CDAGs use direct ZMQ PUB/SUB sockets via Kubernetes DNS
+(ClusterIP Service per task). This has clear implications for:
+
+  - Latency: No broker hop, no disk round-trip to shared storage
+  - Resource overhead: No broker deployment to maintain
+  - Edge suitability: Fewer moving parts for resource-constrained clusters
+
+The trade-off (tighter coupling, no message persistence) is itself an
+interesting research discussion.
+
+------------------------------------------------------------------------------
+3.6  Constraint-Aware Scheduling for Heterogeneous Edge     [MODERATE NOVELTY]
+------------------------------------------------------------------------------
+
+The constraints.nodeNames system combined with HEFT (reference impl) targets
+a real gap: most K8s schedulers assume homogeneous cloud nodes. DSF is
+designed for clusters where nodes have different capabilities (GPU, sensors,
+ARM/x86), which maps to edge computing and IoT deployments. The pluggable
+scheduler interface (api/scheduler/schema.json) enables researchers to swap
+in custom algorithms.
+
+------------------------------------------------------------------------------
+3.7  SDK Abstraction Quality                                [MINOR NOVELTY]
+------------------------------------------------------------------------------
+
+The DSFTask API is notable for its simplicity:
+
+  task = DSFTask()          # reads all config from env vars injected by controller
+  data = task.recv("src")   # local file read (data guaranteed present by DataReady)
+  task.send(result)         # local write + async push handoff to data-agent
+  task.close()              # exit immediately
+
+The user never sees the data-agent, the state protocol, or the transport
+selection. The same 4-line pattern works for root tasks (no recv), middle
+tasks (recv + send), multi-input joins (recv_all()), leaf tasks (recv only),
+and both ODAG (file) and CDAG (PUB/SUB) modes.
+
+Helper properties (is_root, is_leaf, dep_node(), expected_runtime,
+expected_data_size) give task code introspection into its DAG position and
+scheduling context without coupling to the controller.
+
+This is comparable to Dask's @delayed or Ray's @remote, but at the container
+boundary rather than within a single runtime.
+
+------------------------------------------------------------------------------
+3.8  Simultaneous Pod Launch with Blocking Receive          [MINOR NOVELTY]
+     (CDAG mode / legacy ODAG mode)
+------------------------------------------------------------------------------
+
+For CDAGs: all pods start simultaneously; downstream tasks block on recv()
+until upstream publishes. This avoids the complexity of a topological-order
+launcher and leverages ZMQ's connection buffering. Worth mentioning but not
+a paper-level contribution on its own.
+
+
+================================================================================
+PART 4: COMPARISON WITH RELATED WORK
+================================================================================
+
+  System          Batch  Stream  Broker?         K8s-    Edge-   Direct   Decoupled
+                                                 native  target  task     compute-
+                                                                 comm     transfer
+  -------------------------------------------------------------------------------
+  Argo Workflows   Yes    No     N/A (artifacts)  Yes     No      No       No
+  Airflow          Yes    No     DB (XCom)        No*     No      No       No
+  Tekton           Yes    No     N/A (results)    Yes     No      No       No
+  Flink            Yes    Yes    Internal+Kafka   No*     No      Yes**    No
+  KubeEdge         No     Yes    MQTT             Part    Yes     No       No
+  Spark            Yes    No     Shuffle service   No*     No      Yes**    No
+  Dask             Yes    No     In-process        No      No      Yes      No
+  Ray              Yes    No     Object store      No      No      Yes      No
+  DSF              Yes    Yes    NONE             Yes     Yes     Yes      YES
+
+  * = requires adapter/operator for K8s
+  ** = within framework's own runtime, not at the container level
+
+The combination of all columns — batch + streaming, K8s-native, edge-targeted,
+brokerless, direct task-to-task communication, and decoupled compute-transfer
+— is what makes DSF unique. No single existing system checks all boxes.
+
+
+================================================================================
+PART 5: HONEST WEAKNESSES (REVIEWER PERSPECTIVE)
+================================================================================
+
+  1. HEFT scheduler is not integrated into the live controllers — only
+     constraint-aware random placement is used. The HEFT code exists in
+     pkg/scheduler/heft.go and sdk/python/dsf_sdk/schedulers/heft.py
+     but is marked as "reference, not used by controllers."
+
+  2. No network profiling — HEFT assumes a flat 100 Mbps bandwidth constant
+     (DefaultBandwidthBytesPerSec = 12,500,000). Real edge clusters have
+     asymmetric, variable bandwidth.
+
+  3. No formal fault model or consistency guarantees beyond "retry pod"
+     (ODAG) and "reconcile every 30s" (CDAG). The data-agent has 5 retries
+     with 500ms backoff, but there's no analysis of failure modes.
+
+  4. The transport layer doesn't adapt at runtime (e.g., shared memory
+     for co-located tasks, as PLAN.md Section 5 envisions).
+
+  5. No evaluation data to back any performance claims.
+
+  6. The data-agent state protocol uses polling (controller queries
+     GET /state/ in the processReadyTasks loop, which runs every ~2s).
+     A push-based notification model would reduce scheduling latency.
+
+  7. The README is misleading about the ODAG execution model — it should
+     be updated to accurately describe the file transport and layer-by-layer
+     execution before submission.
+
+
+================================================================================
+PART 6: EXPERIMENTAL EVALUATIONS
+================================================================================
+
+The experiments are organized from highest to lowest priority for validating
+the paper's core claims.
+
+------------------------------------------------------------------------------
+Experiment 1: Compute-Transfer Overlap             [VALIDATES CORE NOVELTY]
+------------------------------------------------------------------------------
+
+Hypothesis: Decoupled data transfer via the data-agent reduces end-to-end
+makespan by allowing compute and communication to overlap across DAG layers.
+
+Setup:
+  Compare three modes on the same DAGs:
+    (a) DSF file transport (current: decoupled, data-agent push)
+    (b) Blocking send (modified SDK: task waits for data-agent to confirm
+        DataReady before exiting)
+    (c) Argo-style artifact (task writes to shared storage, successor reads)
+
+  Vary Communication-to-Computation Ratio (CCR):
+    - Compute-bound: small data (1KB-100KB), long compute (10-60s)
+    - Balanced: medium data (1-10MB), medium compute (5-15s)
+    - Comm-bound: large data (50-500MB), short compute (1-3s)
+
+  Use multi-layer DAGs (4+ layers) to see pipeline effects accumulate.
+
+Metrics:
+  - End-to-end makespan for each mode
+  - Per-task pod lifetime vs. per-task compute time (gap = resource freed early)
+  - Layer overlap: when does layer N+1 start relative to layer N's transfer?
+  - Cluster resource utilization over time (CPU/memory timeline)
+
+Why this is the #1 experiment: It directly proves the value of the decoupled
+transfer design. If you can show a 20-40% makespan reduction on comm-heavy
+multi-layer DAGs, that's a strong result.
+
+------------------------------------------------------------------------------
+Experiment 2: DataReady vs. PodSucceeded Scheduling Trigger
+------------------------------------------------------------------------------
+
+Hypothesis: Per-child-node DataReady scheduling starts downstream tasks
+earlier than waiting for PodSucceeded, especially for DAGs with mixed
+same-node and cross-node edges.
+
+Setup:
+  Same DAG, same placement, two scheduling triggers:
+    (a) DataReady (current): child starts when data arrives on its node
+    (b) PodSucceeded (baseline): child starts when parent pod exits
+        (the fallback path at odag-controller/main.go:337)
+
+  Use a diamond DAG where some edges are same-node and some cross-node.
+  Vary data sizes (1KB, 10MB, 100MB) to amplify the difference.
+
+Metrics:
+  - Time from parent send() to child recv() (data delivery latency)
+  - Same-node edge latency vs. cross-node edge latency
+  - Total makespan difference
+  - Scheduling decision latency (time from DataReady to pod creation)
+
+Why this matters: Isolates the scheduling trigger innovation from the
+transport mechanism.
+
+------------------------------------------------------------------------------
+Experiment 3: Data-Agent Transfer Overhead
+------------------------------------------------------------------------------
+
+Hypothesis: HTTP-based peer-to-peer data transfer via per-node agents
+achieves comparable throughput to direct ZMQ, with lower per-message
+overhead than object-storage (S3/MinIO) or message-broker (Kafka).
+
+Setup:
+  Transfer data between two cluster nodes using:
+    (a) DSF data-agent (HTTP PUT, current)
+    (b) ZMQ PUSH/PULL (legacy transport in sdk/python/dsf_sdk/transport/zeromq.py)
+    (c) MinIO/S3 (Argo-style artifact store)
+    (d) Kafka (broker-mediated)
+    (e) NFS shared volume (common K8s pattern)
+
+  Sweep data sizes: 1KB, 10KB, 100KB, 1MB, 10MB, 100MB, 1GB
+  Measure on the actual anrg-* cluster hardware.
+
+Metrics:
+  - Transfer latency (time from send() return to DataReady on dest node)
+  - Throughput (MB/s sustained)
+  - CPU/memory overhead of infrastructure (data-agent vs. MinIO vs. Kafka broker)
+  - Retry success rate under packet loss (data-agent: 5 retries, 500ms backoff)
+
+------------------------------------------------------------------------------
+Experiment 4: Scheduling Algorithm Comparison
+------------------------------------------------------------------------------
+
+Hypothesis: HEFT-based scheduling reduces makespan compared to random and
+round-robin placement on heterogeneous edge clusters.
+
+Setup:
+  Integrate HEFT into the ODAG controller (code exists in pkg/scheduler/heft.go).
+  Implement additional baselines: round-robin, min-min, max-min, CPOP.
+
+  DAG workloads:
+    - Linear chain (N tasks)
+    - Diamond (split-merge)
+    - Fan-out/fan-in (wide parallel layer)
+    - Randomly generated DAGs (vary width, depth, CCR using standard generators
+      like those from Topcuoglu et al.)
+
+  Cluster configurations:
+    - Homogeneous nodes (all same hardware)
+    - Heterogeneous nodes (mixed ARM/x86, CPU-only/GPU)
+
+Metrics:
+  - Makespan
+  - Schedule Length Ratio (SLR = makespan / critical-path-length)
+  - Resource utilization per node
+  - Scheduling computation time
+
+Why this matters: Validates the rationale for having a pluggable scheduler.
+
+------------------------------------------------------------------------------
+Experiment 5: HEFT + DataReady Interaction (Factorial Design)
+------------------------------------------------------------------------------
+
+Hypothesis: HEFT scheduling combined with DataReady-triggered execution
+produces better actual makespan than either optimization alone.
+
+Setup:
+  2x2 factorial design:
+
+                           Random placement    HEFT placement
+  PodSucceeded trigger     Baseline            HEFT-only
+  DataReady trigger        DataReady-only      HEFT + DataReady (full system)
+
+  Use DAGs with known structure and profiled per-task runtimes.
+  Run on the heterogeneous cluster with measured inter-node bandwidths.
+
+Metrics:
+  - Actual makespan for each combination
+  - HEFT prediction accuracy: (predicted - actual) / predicted
+  - Contribution analysis: which factor matters more?
+  - Interaction effect: is the combination super-additive?
+
+Why this matters: Disentangles two independent optimizations and shows
+they're complementary.
+
+------------------------------------------------------------------------------
+Experiment 6: Network-Aware vs. Network-Oblivious Scheduling
+------------------------------------------------------------------------------
+
+Hypothesis: Incorporating measured inter-node bandwidth into scheduling
+decisions significantly reduces makespan for communication-heavy DAGs.
+
+Setup:
+  Profile actual bandwidth between all node pairs (iperf3 or the pathload
+  tools in archive/).
+  Feed real bandwidth matrix into HEFT (replace the flat 100 Mbps constant
+  in DefaultBandwidthBytesPerSec).
+
+  Compare:
+    (a) Network-aware HEFT (measured bandwidth matrix)
+    (b) Network-oblivious HEFT (flat 100 Mbps assumption)
+    (c) Random placement
+
+  Vary CCR: low (compute-bound), medium, high (comm-bound).
+
+Metrics:
+  - Makespan for each approach
+  - Data transfer time as percentage of total makespan
+  - HEFT estimation accuracy with real vs. assumed bandwidth
+
+Why this matters: Edge clusters have asymmetric, variable bandwidth (WiFi vs.
+Ethernet, same-rack vs. cross-rack). This is where edge-specific scheduling
+can shine vs. cloud-centric assumptions.
+
+------------------------------------------------------------------------------
+Experiment 7: Scalability
+------------------------------------------------------------------------------
+
+Hypothesis: DSF's lightweight control plane scales to N tasks / M nodes with
+sub-linear growth in scheduling overhead.
+
+Setup:
+  Generate synthetic ODAGs with increasing task counts: 10, 50, 100, 500.
+  Vary node counts: 3, 5, 8, 12.
+  Measure control plane overhead separately from task execution.
+  Compare against Argo Workflows on the same cluster.
+
+Metrics:
+  - Scheduling latency (submit to first pod running)
+  - Controller CPU/memory
+  - K8s API server request rate
+  - Data-agent request rate and response latency
+  - Total makespan overhead (actual - ideal)
+
+------------------------------------------------------------------------------
+Experiment 8: Scalability of the State Protocol
+------------------------------------------------------------------------------
+
+Hypothesis: The data-agent state query model (controller polls node agents)
+scales better than K8s API-mediated status updates for large DAGs.
+
+Setup:
+  Same DAGs as Experiment 7, but compare state-query mechanisms:
+    (a) Data-agent model (controller HTTP GETs to node agents)
+    (b) K8s-native model (controller watches pod status via API server)
+
+  Observe K8s API server load, controller CPU, and scheduling decision latency.
+
+Metrics:
+  - Time from DataReady to child pod creation (scheduling latency)
+  - K8s API server request rate and latency
+  - Data-agent response latency under load
+  - Controller CPU/memory as task count grows
+
+------------------------------------------------------------------------------
+Experiment 9: Fault Tolerance and Recovery (CDAGs)
+------------------------------------------------------------------------------
+
+Hypothesis: DSF's 30s reconcile loop provides acceptable recovery time for
+streaming pipelines, with measurable data loss bounded by the reconcile
+interval.
+
+Setup:
+  Run a CDAG pipeline with measurable throughput (numbered messages with
+  timestamps).
+  Inject failures:
+    - Kill task pods (kubectl delete pod)
+    - Drain nodes (kubectl drain)
+    - Network partitions (tc netem or Chaos Mesh)
+  Measure recovery under different restartPolicy settings (Always, OnFailure).
+
+Metrics:
+  - Recovery time (failure to all replicas healthy)
+  - Messages lost during failure window
+  - Throughput degradation during recovery
+  - False-positive Degraded detections
+
+------------------------------------------------------------------------------
+Experiment 10: Edge vs. Cloud Deployment Comparison
+------------------------------------------------------------------------------
+
+Hypothesis: DSF on k3s edge clusters achieves comparable or better makespan
+for data-local workloads than cloud-deployed alternatives, with significantly
+lower infrastructure overhead.
+
+Setup:
+  Same DAGs deployed on:
+    (a) DSF on k3s edge cluster (anrg-* nodes)
+    (b) Argo Workflows on k3s (same cluster)
+    (c) Argo Workflows on cloud K8s (EKS/GKE)
+
+  Workloads that generate data locally (sensor simulation, image processing).
+
+Metrics:
+  - Makespan
+  - Control plane resource consumption (CPU/memory of controllers, brokers, etc.)
+  - Data transfer volume (edge-local vs. cloud round-trip)
+  - Deployment complexity (number of components, lines of YAML)
+
+------------------------------------------------------------------------------
+Experiment 11: Streaming vs. Batch on Same DAG Topology
+------------------------------------------------------------------------------
+
+Hypothesis: The same logical DAG can run as either ODAG (one-shot, file
+transport) or CDAG (continuous, PUB/SUB), and the framework's unified SDK
+makes the switchover trivial — but the performance profiles differ in
+predictable ways.
+
+Setup:
+  Design a task graph that makes sense both as batch and streaming (e.g.,
+  data processing pipeline).
+  Run as ODAG: measure makespan, total data transferred, per-task resources.
+  Run as CDAG: measure throughput (msg/sec), per-message latency, recovery time.
+  Measure code changes required to switch modes.
+
+Metrics:
+  - Makespan (ODAG) vs. throughput (CDAG) trade-off
+  - Lines of task code changed between modes (should be ~0)
+  - Resource efficiency (CPU-seconds per unit of work)
+  - Qualitative: developer experience switching modes
+
+------------------------------------------------------------------------------
+Experiment 12: Adaptive Transport Selection (Forward-Looking)
+------------------------------------------------------------------------------
+
+Hypothesis: Selecting transport based on task co-location (shared memory for
+same-node, file+HTTP for cross-node) reduces communication latency for
+co-located task pairs.
+
+Setup (requires implementing transport adaptation from PLAN.md Section 5):
+  Implement a shared-memory or Unix-socket transport for same-node pairs.
+  Have the controller signal co-location via env vars; SDK router selects.
+  Compare: always-file vs. adaptive selection.
+
+Metrics:
+  - Intra-node communication latency
+  - Throughput for large payloads (same-node)
+  - Total makespan reduction
+  - Complexity overhead of adaptive selection
+
+
+================================================================================
+PART 7: SUGGESTED PAPER STRUCTURE
+================================================================================
+
+Title suggestion: "DSF: Decoupled Data Transfer and Locality-Aware Scheduling
+for Containerized DAG Workflows on Edge Clusters"
+
+Core claims (two pillars):
+
+  1. ARCHITECTURAL CLAIM: A brokerless, Kubernetes-native DAG framework with
+     decoupled compute-transfer execution and per-node data agents achieves
+     lower makespan than broker-dependent or artifact-dependent alternatives
+     — particularly on edge clusters where resources are constrained and
+     network topology is heterogeneous.
+
+  2. SCHEDULING CLAIM: Data-locality-aware scheduling (DataReady per child
+     node) combined with constraint-aware HEFT placement outperforms both
+     pod-completion-triggered and network-oblivious scheduling strategies.
+
+Suggested section outline:
+
+  1. Introduction
+     - DAG workflows on edge clusters: motivation and challenges
+     - The cost of brokers and shared storage at the edge
+     - Contributions: decoupled transfer, DataReady scheduling, unified model
+
+  2. Background and Related Work
+     - K8s workflow systems: Argo, Airflow, Tekton
+     - Streaming frameworks: Flink, Kafka Streams
+     - Edge computing frameworks: KubeEdge
+     - DAG scheduling: HEFT, CPOP, min-min/max-min
+     - Position DSF in the taxonomy (see comparison table in Part 4)
+
+  3. System Design
+     3.1 Architecture overview (CRDs, controllers, data-agent, SDK)
+     3.2 ODAG execution model (layer-by-layer, file transport, DataReady)
+     3.3 CDAG execution model (PUB/SUB, reconcile loop)
+     3.4 Decoupled compute-transfer mechanism (the key innovation)
+     3.5 Per-child-node DataReady scheduling
+     3.6 Pluggable scheduler interface and HEFT integration
+     3.7 SDK design and transport abstraction
+
+  4. Evaluation
+     4.1 Testbed description (k3s cluster, node specs, network topology)
+     4.2 Compute-transfer overlap [Experiment 1] — primary result
+     4.3 DataReady vs. PodSucceeded [Experiment 2]
+     4.4 Transport comparison [Experiment 3]
+     4.5 Scheduling algorithms [Experiments 4, 5, 6]
+     4.6 Scalability [Experiments 7, 8]
+     4.7 Fault tolerance [Experiment 9]
+
+  5. Discussion
+     - When does DSF win vs. lose? (CCR regimes, cluster sizes)
+     - Limitations (no message persistence, polling-based state queries)
+     - Adaptive transport and other future directions
+
+  6. Conclusion
+
+Strongest venue fit:
+  - ACM SEC (Symposium on Edge Computing)
+  - IEEE/ACM CCGrid (Cluster, Cloud and Grid Computing)
+  - ACM/IFIP Middleware
+  - ACM HPDC (if positioned as container-era analog of non-blocking MPI sends)
+
+The decoupled compute-transfer mechanism with per-child-node DataReady
+scheduling is the strongest and most differentiating contribution. Experiments
+1, 2, and 5 are the minimum viable evaluation to support the paper's claims.
+
+
+================================================================================
+PART 8: THREE LEVELS OF DECOUPLING (PAPER FRAMING)
+================================================================================
+
+The paper's core contribution can be framed around three levels of decoupling
+that together distinguish DSF from existing systems:
+
+  Level 1 — Compute-Transfer Decoupling
+    Task pods exit after compute; data transfer proceeds independently via
+    node-local agents. The task lifetime equals only the compute phase.
+    Cluster resources are freed immediately. Data delivery is asynchronous.
+    [Validated by Experiments 1, 3]
+
+  Level 2 — Data-Locality-Aware Scheduling
+    Downstream tasks are triggered by data arrival on THEIR node, not by
+    upstream pod completion. Same-node successors start immediately (zero
+    transfer latency); cross-node successors wait only for actual transfer.
+    [Validated by Experiments 2, 5]
+
+  Level 3 — Unified Batch/Streaming Abstraction
+    The same SDK and 4-line pattern (init -> recv -> send -> close) supports
+    both one-shot and continuous DAGs, with transport selection handled by
+    the framework. Users switch modes by changing the YAML kind, not their
+    task code.
+    [Validated by Experiment 11]
+
+The HEFT scheduler integration (Experiments 4, 5, 6) and scalability analysis
+(Experiments 7, 8) round out the evaluation. Fault tolerance (Experiment 9)
+and edge-vs-cloud comparison (Experiment 10) strengthen the systems paper
+narrative.
