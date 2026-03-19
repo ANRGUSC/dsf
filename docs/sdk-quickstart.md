@@ -80,10 +80,24 @@ task.close()   # no send() — this is a terminal node
 
 ### SDK API reference
 
+**Attributes** (read-only, set at init from injected env vars):
+
+| Attribute | Type | Description |
+|---|---|---|
+| `task.name` | `str` | This task's name. |
+| `task.node` | `str` | Cluster node this pod is running on. |
+| `task.dependencies` | `list[str]` | Names of upstream tasks this task reads from. |
+| `task.successors` | `list[str]` | Names of downstream tasks that read from this task. |
+| `task.is_root` | `bool` | `True` if this task has no dependencies. |
+| `task.is_leaf` | `bool` | `True` if this task has no successors (no need to call `send()`). |
+| `task.expected_runtime` | `float` | Expected wall-clock runtime in seconds from the ODAG spec. |
+| `task.expected_data_size` | `int` | Expected output size in bytes from the ODAG spec. |
+
+**Methods:**
+
 | Method | Description |
 |---|---|
-| `DSFTask()` | Initialize. Reads config from env vars injected by the controller. |
-| `task.name` | This task's name (from `DSF_TASK_NAME`). |
+| `task.dep_node(dep)` | Returns the node name where dependency `dep` ran. Useful for logging whether a transfer was local or cross-node. |
 | `task.recv(peer)` | Read one upstream dependency's output. `peer` is the dependency task name. Omit if there is exactly one dependency. |
 | `task.recv_all()` | Read all upstream dependencies. Returns `{name: data}`. |
 | `task.send(data)` | Send output to all downstream successors. `data` must be JSON-serializable. |
