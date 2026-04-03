@@ -133,7 +133,14 @@ spec:
                         description: Optional hint for expected output data size (e.g. "100MB"). Used by HEFT scheduler if no profiler data exists.
                       runtime:
                         type: number
-                        description: Optional hint for expected runtime in seconds. Used by HEFT scheduler if no profiler data exists.
+                        description: Optional scalar hint for expected runtime in seconds. Used as fallback when runtimeProfile has no entry for a node.
+                      runtimeProfile:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                        description: >
+                          Per-node runtime hints in seconds. Keys are node names, values are expected
+                          runtimes. Example: {"anrg-3": 6, "anrg-8": 12}. Takes priority over
+                          the scalar runtime field. Profiler data (if available) takes priority over this.
                       env:
                         type: array
                         items:

@@ -368,10 +368,14 @@ func buildRuntimeResolver(db *sql.DB, template string, tasks []taskSpec,
 	minSamples int, defaultRuntime float64, runtimeSource string) func(taskName, nodeName string) float64 {
 
 	specHints := make(map[string]float64, len(tasks))
+	specProfiles := make(map[string]map[string]float64, len(tasks))
 	imageByTask := make(map[string]string, len(tasks))
 	for _, t := range tasks {
 		if t.Runtime > 0 {
 			specHints[t.Name] = t.Runtime
+		}
+		if len(t.RuntimeProfile) > 0 {
+			specProfiles[t.Name] = t.RuntimeProfile
 		}
 		imageByTask[t.Name] = t.Image
 	}
@@ -384,24 +388,30 @@ func buildRuntimeResolver(db *sql.DB, template string, tasks []taskSpec,
 
 	return func(taskName, nodeName string) float64 {
 		if useProfiler && db != nil {
-			// 1. Template-specific profile
+			// 1. Template-specific profile (from profiler DB)
 			if template != "" {
 				if p, ok := getTaskProfile(db, template, taskName, nodeName); ok && p.Samples >= minSamples {
 					return p.Runtime
 				}
 			}
-			// 2. Image-based profile
+			// 2. Image-based profile (from profiler DB)
 			if img := imageByTask[taskName]; img != "" {
 				if p, ok := getImageProfile(db, img, nodeName); ok && p.Samples >= minSamples {
 					return p.Runtime
 				}
 			}
 		}
-		// 3. Spec hint
+		// 3. Per-node runtime hint from spec (runtimeProfile field)
+		if prof, ok := specProfiles[taskName]; ok {
+			if rt, ok := prof[nodeName]; ok {
+				return rt
+			}
+		}
+		// 4. Scalar runtime hint from spec
 		if hint, ok := specHints[taskName]; ok {
 			return hint
 		}
-		// 4. Template default
+		// 5. Template default
 		return defaultRuntime
 	}
 }

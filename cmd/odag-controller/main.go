@@ -431,17 +431,18 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 // --------------------------------------------------------------------------
 
 type taskSpec struct {
-	Name         string
-	Image        string
-	Command      []string
-	Args         []string
-	Dependencies []string
-	DataSize     string
-	Runtime      float64
-	CPU          string
-	Memory       string
-	Constraints  []string
-	UserEnv      []corev1.EnvVar
+	Name           string
+	Image          string
+	Command        []string
+	Args           []string
+	Dependencies   []string
+	DataSize       string
+	Runtime        float64
+	RuntimeProfile map[string]float64 // node name -> runtime (seconds)
+	CPU            string
+	Memory         string
+	Constraints    []string
+	UserEnv        []corev1.EnvVar
 }
 
 func extractTasks(obj *unstructured.Unstructured) []taskSpec {
@@ -462,6 +463,28 @@ func extractTasks(obj *unstructured.Unstructured) []taskSpec {
 		deps, _, _ := unstructured.NestedStringSlice(t, "dependencies")
 		dataSize, _ := t["dataSize"].(string)
 		runtime, _ := t["runtime"].(int64)
+		// Also try float64 (CRD stores number as float when it has decimals).
+		var runtimeF float64
+		if runtime > 0 {
+			runtimeF = float64(runtime)
+		} else if rf, ok := t["runtime"].(float64); ok {
+			runtimeF = rf
+		}
+
+		// Parse per-node runtime profile: {"anrg-3": 6, "anrg-8": 12}
+		var rtProfile map[string]float64
+		if rp, ok := t["runtimeProfile"].(map[string]interface{}); ok {
+			rtProfile = make(map[string]float64, len(rp))
+			for node, val := range rp {
+				switch v := val.(type) {
+				case float64:
+					rtProfile[node] = v
+				case int64:
+					rtProfile[node] = float64(v)
+				}
+			}
+		}
+
 		constraints, _, _ := unstructured.NestedStringSlice(t, "constraints", "nodeNames")
 		cpu, _, _ := unstructured.NestedString(t, "resources", "cpu")
 		mem, _, _ := unstructured.NestedString(t, "resources", "memory")
@@ -480,13 +503,14 @@ func extractTasks(obj *unstructured.Unstructured) []taskSpec {
 		}
 
 		tasks = append(tasks, taskSpec{
-			Name:         name,
-			Image:        image,
-			Command:      cmd,
-			Args:         args,
-			Dependencies: deps,
-			DataSize:     dataSize,
-			Runtime:      float64(runtime),
+			Name:           name,
+			Image:          image,
+			Command:        cmd,
+			Args:           args,
+			Dependencies:   deps,
+			DataSize:       dataSize,
+			Runtime:        runtimeF,
+			RuntimeProfile: rtProfile,
 			Constraints:  constraints,
 			CPU:          cpu,
 			Memory:       mem,
