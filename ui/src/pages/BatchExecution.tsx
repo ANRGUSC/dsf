@@ -68,37 +68,37 @@ export default function BatchExecution() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-6">
-        <h1 className="text-xl font-bold text-white">Batch Execution</h1>
+        <h1 className="text-xl font-bold text-on">Batch Execution</h1>
         <button
           onClick={handleRun}
           disabled={submitting || isAnyActive}
           className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
             submitting || isAnyActive
-              ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              ? 'bg-surface-card text-on-muted cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-500'
           }`}
         >
           {submitting ? 'Submitting...' : isAnyActive ? 'Running...' : 'Run Batch'}
         </button>
         {existing.size > 0 && (
-          <span className="text-sm text-gray-400">
+          <span className="text-sm text-on-muted">
             {succeededCount}/{BATCH_NAMES.length} succeeded
-            {failedCount > 0 && <span className="text-red-400 ml-2">{failedCount} failed</span>}
+            {failedCount > 0 && <span className="text-red-500 dark:text-red-400 ml-2">{failedCount} failed</span>}
           </span>
         )}
       </div>
 
       {/* Description */}
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-on-faint">
         Submits 5 ODAGs with HEFT scheduling, staggered over ~60s,
         to test multi-DAG scheduling across the cluster.
       </p>
 
       {/* Overview table */}
-      <div className="border border-gray-800 rounded overflow-hidden">
+      <div className="border border-line rounded overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-900 text-gray-400 text-left">
+            <tr className="bg-surface-alt text-on-muted text-left">
               <th className="px-4 py-2 w-5"></th>
               <th className="px-4 py-2">Name</th>
               <th className="px-4 py-2">Topology</th>
@@ -115,7 +115,7 @@ export default function BatchExecution() {
               return (
                 <tr
                   key={preset.name}
-                  className="border-t border-gray-800 hover:bg-gray-900/50"
+                  className="border-t border-line hover:bg-surface-alt/50"
                 >
                   <td className="px-4 py-2">
                     <span
@@ -127,28 +127,28 @@ export default function BatchExecution() {
                     {summary ? (
                       <Link
                         to={`/odags/${NS}/${preset.name}`}
-                        className="text-blue-400 hover:text-blue-300"
+                        className="text-accent hover:text-accent-hover"
                       >
                         {preset.name}
                       </Link>
                     ) : (
-                      <span className="text-gray-300">{preset.name}</span>
+                      <span className="text-on-secondary">{preset.name}</span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-gray-400">{preset.topology}</td>
-                  <td className="px-4 py-2 text-gray-400">+{preset.delay}s</td>
+                  <td className="px-4 py-2 text-on-muted">{preset.topology}</td>
+                  <td className="px-4 py-2 text-on-muted">+{preset.delay}s</td>
                   <td className="px-4 py-2">
                     {summary ? (
                       <StatusBadge phase={summary.phase} />
                     ) : (
-                      <span className="text-xs text-gray-600">not submitted</span>
+                      <span className="text-xs text-on-faint">not submitted</span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-gray-400">{preset.taskCount}</td>
-                  <td className="px-4 py-2 text-gray-300">
+                  <td className="px-4 py-2 text-on-muted">{preset.taskCount}</td>
+                  <td className="px-4 py-2 text-on-secondary">
                     {formatDuration(summary?.makespan)}
                   </td>
-                  <td className="px-4 py-2 text-gray-400">
+                  <td className="px-4 py-2 text-on-muted">
                     {summary?.scheduler ?? '-'}
                   </td>
                 </tr>
@@ -160,10 +160,10 @@ export default function BatchExecution() {
 
       {/* Combined Gantt Chart */}
       <div>
-        <h2 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wider">
+        <h2 className="text-sm font-semibold text-on-muted mb-3 uppercase tracking-wider">
           Combined Schedule
         </h2>
-        <div className="border border-gray-800 rounded p-4 bg-gray-900/30">
+        <div className="border border-line rounded p-4 bg-surface-alt/30">
           <BatchGanttChart odags={details} />
         </div>
       </div>

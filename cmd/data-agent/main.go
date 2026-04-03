@@ -47,8 +47,9 @@ const (
 
 var dataDir string
 
-func stateFile(rel string) string  { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-state") }
+func stateFile(rel string) string   { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-state") }
 func sendingFile(rel string) string { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-sending") }
+func bytesFile(rel string) string   { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-bytes") }
 
 func writeFile(path, value string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -167,6 +168,9 @@ func main() {
 				return
 			}
 
+			// Record actual output size.
+			_ = writeFile(bytesFile(rel), fmt.Sprintf("%d", len(data)))
+
 			setSending(rel, true)
 			log.Printf("[data-agent/%s] PUSH %s/%s: pushing %d bytes to %d successor(s)",
 				nodeName, odag, task, len(data), len(body.Successors))
@@ -191,6 +195,30 @@ func main() {
 				log.Printf("[data-agent/%s] PUSH %s/%s: Failed (one or more pushes failed)", nodeName, odag, task)
 			}
 		}()
+	})
+
+	// GET /bytes/<odag>/<task> — query actual output bytes for a task
+	http.HandleFunc("/bytes/", func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/bytes/")
+		if rel == "" {
+			http.Error(w, "missing odag/task path", http.StatusBadRequest)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		data, err := os.ReadFile(bytesFile(rel))
+		if os.IsNotExist(err) {
+			fmt.Fprint(w, "0")
+			return
+		}
+		if err != nil {
+			http.Error(w, "failed to read", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write(data)
 	})
 
 	// PUT/GET /sending/<odag>/<task>

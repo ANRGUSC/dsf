@@ -50,16 +50,16 @@ export default function ODAGDetail() {
     enabled: tab === 'history',
   })
 
-  if (isLoading) return <p className="text-gray-400">Loading...</p>
-  if (error || !dag) return <p className="text-red-400">Error: {String(error)}</p>
+  if (isLoading) return <p className="text-on-muted">Loading...</p>
+  if (error || !dag) return <p className="text-red-500 dark:text-red-400">Error: {String(error)}</p>
 
   return (
     <div>
       {/* Breadcrumb */}
-      <div className="text-sm text-gray-500 mb-4">
-        <Link to="/" className="hover:text-gray-300">ODAGs</Link>
+      <div className="text-sm text-on-faint mb-4">
+        <Link to="/" className="hover:text-on-secondary">ODAGs</Link>
         <span className="mx-2">/</span>
-        <span className="text-gray-300">{dag.namespace}/{dag.name}</span>
+        <span className="text-on-secondary">{dag.namespace}/{dag.name}</span>
       </div>
 
       {/* Header */}
@@ -67,16 +67,16 @@ export default function ODAGDetail() {
         <h1 className="text-lg font-semibold">{dag.name}</h1>
         <StatusBadge phase={dag.phase} />
 {dag.makespan != null && (
-          <span className="text-gray-500 text-sm">makespan: {dag.makespan.toFixed(1)}s</span>
+          <span className="text-on-faint text-sm">makespan: {dag.makespan.toFixed(1)}s</span>
         )}
         <div className="ml-auto flex items-center gap-3">
           {retryError && (
-            <span className="text-xs text-red-400">{retryError}</span>
+            <span className="text-xs text-red-500 dark:text-red-400">{retryError}</span>
           )}
           <button
             onClick={handleRetry}
             disabled={retrying || dag.phase === 'Running' || dag.phase === 'Scheduling' || dag.phase === 'Pending'}
-            className="text-xs px-3 py-1.5 rounded border border-gray-600 text-gray-300 hover:border-blue-500 hover:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="text-xs px-3 py-1.5 rounded border border-line text-on-secondary hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {retrying ? 'Retrying...' : 'Retry'}
           </button>
@@ -84,12 +84,12 @@ export default function ODAGDetail() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-4 border-b border-gray-800 mb-6 text-sm">
+      <div className="flex gap-4 border-b border-line mb-6 text-sm">
         {(['graph', 'tasks', 'schedule', 'history'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`pb-2 capitalize ${tab === t ? 'text-white border-b-2 border-white' : 'text-gray-500 hover:text-gray-300'}`}
+            className={`pb-2 capitalize ${tab === t ? 'text-on border-b-2 border-on' : 'text-on-faint hover:text-on-secondary'}`}
           >
             {t}
           </button>
@@ -129,7 +129,7 @@ export default function ODAGDetail() {
         return (
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr className="text-left text-gray-400 border-b border-gray-800">
+              <tr className="text-left text-on-muted border-b border-line">
                 <th className="pb-2 pr-4">Task</th>
                 <th className="pb-2 pr-4">Phase</th>
                 <th className="pb-2 pr-4">State</th>
@@ -148,20 +148,20 @@ export default function ODAGDetail() {
                 const allowed = constraintMap.get(task.name) ?? []
                 const spec = specMap.get(task.name)
                 return (
-                  <tr key={task.name} className="border-b border-gray-900">
+                  <tr key={task.name} className="border-b border-line-soft">
                     <td className="py-2 pr-4 font-medium">{task.name}</td>
                     <td className="py-2 pr-4"><StatusBadge phase={task.phase} /></td>
-                    <td className="py-2 pr-4 text-gray-400 text-xs">{task.state ?? '—'}</td>
-                    <td className="py-2 pr-4 text-gray-400">{task.node ?? '—'}</td>
-                    <td className="py-2 pr-4 text-gray-500 text-xs">
-                      {allowed.length > 0 ? allowed.join(', ') : <span className="text-gray-700">any</span>}
+                    <td className="py-2 pr-4 text-on-muted text-xs">{task.state ?? '—'}</td>
+                    <td className="py-2 pr-4 text-on-muted">{task.node ?? '—'}</td>
+                    <td className="py-2 pr-4 text-on-faint text-xs">
+                      {allowed.length > 0 ? allowed.join(', ') : <span className="text-on-faint">any</span>}
                     </td>
-                    <td className="py-2 pr-4 text-gray-400 text-xs">{fmtDuration(task.startTime, task.completionTime)}</td>
-                    <td className="py-2 pr-4 text-gray-400 text-xs">{fmtBytes(task.dataSize)}</td>
-                    <td className="py-2 pr-4 text-gray-500 text-xs">{spec?.runtime != null ? `${spec.runtime}s` : '—'}</td>
-                    <td className="py-2 pr-4 text-gray-500 text-xs">{task.podName ?? '—'}</td>
-                    <td className="py-2 pr-4 text-gray-400">{task.retries ?? 0}</td>
-                    <td className="py-2 text-gray-500 text-xs">{task.message ?? ''}</td>
+                    <td className="py-2 pr-4 text-on-muted text-xs">{fmtDuration(task.startTime, task.completionTime)}</td>
+                    <td className="py-2 pr-4 text-on-muted text-xs">{fmtBytes(task.dataSize)}</td>
+                    <td className="py-2 pr-4 text-on-faint text-xs">{spec?.runtime != null ? `${spec.runtime}s` : '—'}</td>
+                    <td className="py-2 pr-4 text-on-faint text-xs">{task.podName ?? '—'}</td>
+                    <td className="py-2 pr-4 text-on-muted">{task.retries ?? 0}</td>
+                    <td className="py-2 text-on-faint text-xs">{task.message ?? ''}</td>
                   </tr>
                 )
               })}
@@ -180,7 +180,7 @@ export default function ODAGDetail() {
                   <XAxis dataKey="run" stroke="#6b7280" tick={{ fill: '#9ca3af' }} />
                   <YAxis stroke="#6b7280" tick={{ fill: '#9ca3af' }} unit="s" />
                   <Tooltip
-                    contentStyle={{ background: '#111827', border: '1px solid #374151', color: '#f9fafb' }}
+                    contentStyle={{ background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--on-surface)' }}
                     formatter={(v: number) => [`${v.toFixed(1)}s`, 'Makespan']}
                   />
                   <Line type="monotone" dataKey="makespan" stroke="#60a5fa" dot={false} />
@@ -188,7 +188,7 @@ export default function ODAGDetail() {
               </ResponsiveContainer>
               <table className="w-full text-sm border-collapse mt-6">
                 <thead>
-                  <tr className="text-left text-gray-400 border-b border-gray-800">
+                  <tr className="text-left text-on-muted border-b border-line">
                     <th className="pb-2 pr-4">Run</th>
                     <th className="pb-2 pr-4">Phase</th>
                     <th className="pb-2 pr-4">Makespan</th>
@@ -197,20 +197,20 @@ export default function ODAGDetail() {
                 </thead>
                 <tbody>
                   {history.map((h, i) => (
-                    <tr key={h.runId} className="border-b border-gray-900">
-                      <td className="py-2 pr-4 text-gray-400">#{i + 1}</td>
+                    <tr key={h.runId} className="border-b border-line-soft">
+                      <td className="py-2 pr-4 text-on-muted">#{i + 1}</td>
                       <td className="py-2 pr-4"><StatusBadge phase={h.phase} /></td>
-                      <td className="py-2 pr-4 text-gray-400">
+                      <td className="py-2 pr-4 text-on-muted">
                         {h.makespan != null ? `${h.makespan.toFixed(1)}s` : '—'}
                       </td>
-                      <td className="py-2 text-gray-500 text-xs">{new Date(h.startTime).toLocaleString()}</td>
+                      <td className="py-2 text-on-faint text-xs">{new Date(h.startTime).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </>
           ) : (
-            <p className="text-gray-500">No historical runs recorded yet.</p>
+            <p className="text-on-faint">No historical runs recorded yet.</p>
           )}
         </div>
       )}

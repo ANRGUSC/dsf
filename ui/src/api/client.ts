@@ -91,6 +91,60 @@ export interface CDAGDetail extends CDAGSummary {
   }
 }
 
+export interface TemplateSummary {
+  name: string
+  namespace: string
+  description: string
+  scheduler: string
+  taskCount: number
+  runCount: number
+  lastRunMakespan?: number
+  lastRunName?: string
+  lastRunPhase?: string
+  profilingEnabled: boolean
+  createdAt: string
+}
+
+export interface TemplateDetail extends TemplateSummary {
+  profileSummary?: Record<string, Record<string, number>>
+  spec: {
+    tasks: Array<{
+      name: string
+      image: string
+      dependencies: string[]
+      dataSize?: string
+      runtime?: number
+      resources?: { cpu?: string; memory?: string }
+      constraints?: { nodeNames?: string[] }
+    }>
+    profiling?: {
+      enabled?: boolean
+      warmupRuns?: number
+      minSamples?: number
+      emaAlpha?: number
+      maxSamples?: number
+    }
+    defaults?: {
+      runtime?: number
+      dataSize?: string
+    }
+    retention?: {
+      maxRuns?: number
+    }
+  }
+}
+
+export interface TemplateRun {
+  name: string
+  namespace: string
+  run: string
+  phase: string
+  makespan?: number
+  startTime?: string
+  completionTime?: string
+  createdAt: string
+}
+
 export interface BatchODAGEntry {
   name: string
   delay: number
@@ -133,4 +187,18 @@ export const api = {
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
       return res.json()
     }),
+
+  // Templates
+  listTemplates: (): Promise<TemplateSummary[]> =>
+    get('/api/templates'),
+
+  getTemplate: (namespace: string, name: string): Promise<TemplateDetail> =>
+    get(`/api/templates/${namespace}/${name}`),
+
+  getTemplateRuns: (namespace: string, name: string): Promise<TemplateRun[]> =>
+    get(`/api/templates/${namespace}/${name}/runs`),
+
+  runTemplate: (namespace: string, name: string): Promise<{ name: string; run: number; message: string }> =>
+    fetch(`/api/templates/${namespace}/${name}/run`, { method: 'POST' })
+      .then(res => { if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.json() }),
 }

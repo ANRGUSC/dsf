@@ -1,5 +1,15 @@
 import type { ODAGDetail } from '@/api/client'
 
+function isDark() { return document.documentElement.classList.contains('dark') }
+function rowEven() { return isDark() ? '#0f172a' : '#f9fafb' }
+function rowOdd() { return isDark() ? '#111827' : '#f3f4f6' }
+function gridStroke() { return isDark() ? '#1f2937' : '#e5e7eb' }
+function axisStroke() { return isDark() ? '#374151' : '#d1d5db' }
+function labelFill() { return isDark() ? '#9ca3af' : '#6b7280' }
+function tickFill() { return isDark() ? '#6b7280' : '#9ca3af' }
+function barTextDark() { return isDark() ? '#0f172a' : '#ffffff' }
+function legendFill() { return isDark() ? '#6b7280' : '#9ca3af' }
+
 const TASK_COLORS = [
   '#60a5fa', '#34d399', '#f59e0b', '#f87171',
   '#a78bfa', '#fb923c', '#e879f9', '#2dd4bf',
@@ -39,7 +49,7 @@ export default function GanttChart({ dag }: Props) {
   const nodes = Array.from(nodeSet).sort()
 
   if (nodes.length === 0) {
-    return <p className="text-gray-500 text-sm">No schedule data yet.</p>
+    return <p className="text-on-faint text-sm">No schedule data yet.</p>
   }
 
   const maxTime = Math.max(
@@ -83,7 +93,7 @@ export default function GanttChart({ dag }: Props) {
             key={node}
             x={ML} y={rowY(node)}
             width={innerW} height={ROW}
-            fill={i % 2 === 0 ? '#0f172a' : '#111827'}
+            fill={i % 2 === 0 ? rowEven() : rowOdd()}
           />
         ))}
 
@@ -93,7 +103,7 @@ export default function GanttChart({ dag }: Props) {
             key={t}
             x1={ML + xs(t)} y1={MT}
             x2={ML + xs(t)} y2={MT + innerH}
-            stroke="#1f2937" strokeWidth={1}
+            stroke={gridStroke()} strokeWidth={1}
           />
         ))}
 
@@ -105,7 +115,7 @@ export default function GanttChart({ dag }: Props) {
             y={rowY(node) + ROW / 2}
             textAnchor="end"
             dominantBaseline="middle"
-            fill="#9ca3af"
+            fill={labelFill()}
             fontSize={11}
           >
             {node}
@@ -156,7 +166,7 @@ export default function GanttChart({ dag }: Props) {
               <text
                 x={x + 4} y={y + BAR / 2}
                 dominantBaseline="middle"
-                fill="#0f172a"
+                fill={barTextDark()}
                 fontWeight="bold"
                 fontSize={9}
                 style={{ pointerEvents: 'none' }}
@@ -172,7 +182,7 @@ export default function GanttChart({ dag }: Props) {
         <line
           x1={ML} y1={MT + innerH}
           x2={ML + innerW} y2={MT + innerH}
-          stroke="#374151" strokeWidth={1}
+          stroke={axisStroke()} strokeWidth={1}
         />
 
         {/* X axis ticks + labels */}
@@ -181,12 +191,12 @@ export default function GanttChart({ dag }: Props) {
             <line
               x1={ML + xs(t)} y1={MT + innerH}
               x2={ML + xs(t)} y2={MT + innerH + 5}
-              stroke="#374151"
+              stroke={axisStroke()}
             />
             <text
               x={ML + xs(t)} y={MT + innerH + 16}
               textAnchor="middle"
-              fill="#6b7280"
+              fill={tickFill()}
               fontSize={10}
             >
               {t}s
@@ -198,9 +208,9 @@ export default function GanttChart({ dag }: Props) {
         <g transform={`translate(${ML}, ${MT + innerH + 30})`}>
           <rect x={0} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.18}
             stroke="#9ca3af" strokeDasharray="5 3" strokeWidth={1.5} rx={1} />
-          <text x={20} y={5} dominantBaseline="middle" fill="#6b7280" fontSize={11}>Predicted</text>
+          <text x={20} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Predicted</text>
           <rect x={90} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.9} rx={1} />
-          <text x={110} y={5} dominantBaseline="middle" fill="#6b7280" fontSize={11}>Actual</text>
+          <text x={110} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Actual</text>
         </g>
       </svg>
     </div>

@@ -29,8 +29,9 @@ import (
 // --------------------------------------------------------------------------
 
 var (
-	odagGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
-	cdagGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
+	odagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
+	cdagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
+	odagTemplateGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odagtemplates"}
 )
 
 // --------------------------------------------------------------------------
@@ -43,6 +44,7 @@ type Server struct {
 	mu        sync.RWMutex
 	odags     map[string]*unstructured.Unstructured // "ns/name" -> obj
 	cdags     map[string]*unstructured.Unstructured
+	templates map[string]*unstructured.Unstructured
 
 	// SSE clients: each client gets a channel of JSON event bytes.
 	sseMu      sync.Mutex
@@ -55,6 +57,7 @@ func newServer(dynClient dynamic.Interface, db *sql.DB) *Server {
 		db:         db,
 		odags:      make(map[string]*unstructured.Unstructured),
 		cdags:      make(map[string]*unstructured.Unstructured),
+		templates:  make(map[string]*unstructured.Unstructured),
 		sseClients: make(map[chan []byte]struct{}),
 	}
 }
@@ -90,6 +93,7 @@ func main() {
 	// Start K8s watch loops.
 	go srv.watchResources(odagGVR, &srv.odags)
 	go srv.watchResources(cdagGVR, &srv.cdags)
+	go srv.watchResources(odagTemplateGVR, &srv.templates)
 
 	// HTTP routes.
 	mux := http.NewServeMux()
@@ -100,6 +104,11 @@ func main() {
 	mux.HandleFunc("GET /api/cdags", srv.handleListCDAGs)
 	mux.HandleFunc("GET /api/cdags/{namespace}/{name}", srv.handleGetCDAG)
 	mux.HandleFunc("POST /api/batch", srv.handleBatchSubmit)
+	mux.HandleFunc("GET /api/templates", srv.handleListTemplates)
+	mux.HandleFunc("GET /api/templates/{namespace}/{name}", srv.handleGetTemplate)
+	mux.HandleFunc("GET /api/templates/{namespace}/{name}/runs", srv.handleGetTemplateRuns)
+	mux.HandleFunc("POST /api/templates/{namespace}/{name}/run", srv.handleRunTemplate)
+	mux.HandleFunc("DELETE /api/templates/{namespace}/{name}", srv.handleDeleteTemplate)
 	mux.HandleFunc("GET /api/events", srv.handleSSE)
 
 	// Serve compiled React frontend from ui/dist (embedded at build time).
@@ -303,6 +312,196 @@ func (s *Server) handleGetCDAG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, cdagDetail(obj))
+}
+
+// --------------------------------------------------------------------------
+// Template handlers
+// --------------------------------------------------------------------------
+
+func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]map[string]interface{}, 0, len(s.templates))
+	for _, obj := range s.templates {
+		result = append(result, templateSummary(obj))
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return fmt.Sprint(result[i]["name"]) < fmt.Sprint(result[j]["name"])
+	})
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	s.mu.RLock()
+	obj, ok := s.templates[ns+"/"+name]
+	s.mu.RUnlock()
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, templateDetail(obj))
+}
+
+func (s *Server) handleGetTemplateRuns(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	s.mu.RLock()
+	var runs []map[string]interface{}
+	for _, obj := range s.odags {
+		labels := obj.GetLabels()
+		if labels["dsf.io/template"] == name && obj.GetNamespace() == ns {
+			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
+			makespan := nestedFloat(obj.Object, "status", "makespan")
+			startTime, _, _ := unstructured.NestedString(obj.Object, "status", "startTime")
+			completionTime, _, _ := unstructured.NestedString(obj.Object, "status", "completionTime")
+			runs = append(runs, map[string]interface{}{
+				"name":           obj.GetName(),
+				"namespace":      ns,
+				"run":            labels["dsf.io/run"],
+				"phase":          defaultStr(phase, "Pending"),
+				"makespan":       makespan,
+				"startTime":      startTime,
+				"completionTime": completionTime,
+				"createdAt":      obj.GetCreationTimestamp().UTC().Format(time.RFC3339),
+			})
+		}
+	}
+	s.mu.RUnlock()
+
+	sort.Slice(runs, func(i, j int) bool {
+		return fmt.Sprint(runs[i]["createdAt"]) < fmt.Sprint(runs[j]["createdAt"])
+	})
+	if runs == nil {
+		runs = []map[string]interface{}{}
+	}
+	writeJSON(w, runs)
+}
+
+func (s *Server) handleRunTemplate(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	s.mu.RLock()
+	tmplObj, ok := s.templates[ns+"/"+name]
+	s.mu.RUnlock()
+	if !ok {
+		http.Error(w, "template not found", http.StatusNotFound)
+		return
+	}
+
+	// Count existing runs to determine next run number.
+	s.mu.RLock()
+	runCount := 0
+	for _, obj := range s.odags {
+		if obj.GetLabels()["dsf.io/template"] == name && obj.GetNamespace() == ns {
+			runCount++
+		}
+	}
+	s.mu.RUnlock()
+	runNum := runCount + 1
+	odagName := fmt.Sprintf("%s-run-%03d", name, runNum)
+
+	// Extract spec from template, stripping template-only fields.
+	spec, _, _ := unstructured.NestedMap(tmplObj.Object, "spec")
+	delete(spec, "profiling")
+	delete(spec, "defaults")
+	delete(spec, "retention")
+	delete(spec, "description")
+
+	odag := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "dsf.io/v1",
+			"kind":       "ODAG",
+			"metadata": map[string]interface{}{
+				"name":      odagName,
+				"namespace": ns,
+				"labels": map[string]interface{}{
+					"dsf.io/template": name,
+					"dsf.io/run":      fmt.Sprintf("%d", runNum),
+				},
+			},
+			"spec": spec,
+		},
+	}
+
+	if _, err := s.dynClient.Resource(odagGVR).Namespace(ns).Create(
+		context.Background(), odag, metav1.CreateOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"name":    odagName,
+		"run":     runNum,
+		"message": fmt.Sprintf("Created run %s from template %s", odagName, name),
+	})
+}
+
+func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	if err := s.dynClient.Resource(odagTemplateGVR).Namespace(ns).Delete(
+		context.Background(), name, metav1.DeleteOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "deleted", "name": name})
+}
+
+// --------------------------------------------------------------------------
+// Template response builders
+// --------------------------------------------------------------------------
+
+func templateSummary(obj *unstructured.Unstructured) map[string]interface{} {
+	tasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	sched, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
+	desc, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
+	runCount := nestedFloat(obj.Object, "status", "runCount")
+	lastMakespan := nestedFloat(obj.Object, "status", "lastRunMakespan")
+	lastRunName, _, _ := unstructured.NestedString(obj.Object, "status", "lastRunName")
+	lastRunPhase, _, _ := unstructured.NestedString(obj.Object, "status", "lastRunPhase")
+
+	profilingEnabled := true
+	if v, ok, _ := unstructured.NestedBool(obj.Object, "spec", "profiling", "enabled"); ok {
+		profilingEnabled = v
+	}
+
+	return map[string]interface{}{
+		"name":             obj.GetName(),
+		"namespace":        obj.GetNamespace(),
+		"description":      desc,
+		"scheduler":        defaultStr(sched, "random"),
+		"taskCount":        len(tasks),
+		"runCount":         int(runCount),
+		"lastRunMakespan":  lastMakespan,
+		"lastRunName":      lastRunName,
+		"lastRunPhase":     lastRunPhase,
+		"profilingEnabled": profilingEnabled,
+		"createdAt":        obj.GetCreationTimestamp().UTC().Format(time.RFC3339),
+	}
+}
+
+func templateDetail(obj *unstructured.Unstructured) map[string]interface{} {
+	summary := templateSummary(obj)
+	specTasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	profiling, _, _ := unstructured.NestedMap(obj.Object, "spec", "profiling")
+	defaults, _, _ := unstructured.NestedMap(obj.Object, "spec", "defaults")
+	retention, _, _ := unstructured.NestedMap(obj.Object, "spec", "retention")
+	profileSummary, _, _ := unstructured.NestedMap(obj.Object, "status", "profileSummary")
+
+	summary["spec"] = map[string]interface{}{
+		"tasks":     specTasks,
+		"profiling": profiling,
+		"defaults":  defaults,
+		"retention": retention,
+	}
+	if profileSummary != nil {
+		summary["profileSummary"] = profileSummary
+	}
+	return summary
 }
 
 // handleBatchSubmit creates multiple ODAGs with staggered delays.

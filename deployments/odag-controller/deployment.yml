@@ -38,3 +38,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: DSF_PROFILER_DB
+              value: /data/dsf-profiler.db
+          volumeMounts:
+            - name: profiler-data
+              mountPath: /data
+      volumes:
+        - name: profiler-data
+          hostPath:
+            path: /var/lib/dsf
+            type: DirectoryOrCreate

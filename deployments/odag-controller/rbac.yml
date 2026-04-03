@@ -12,9 +12,16 @@ rules:
   # ODAG CRD
   - apiGroups: ["dsf.io"]
     resources: ["odags"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["dsf.io"]
     resources: ["odags/status"]
+    verbs: ["update", "patch"]
+  # ODAGTemplate CRD
+  - apiGroups: ["dsf.io"]
+    resources: ["odagtemplates"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["dsf.io"]
+    resources: ["odagtemplates/status"]
     verbs: ["update", "patch"]
   # Pods and Services (create and manage task pods + their services)
   - apiGroups: [""]

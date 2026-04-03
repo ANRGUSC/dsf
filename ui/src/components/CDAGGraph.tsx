@@ -22,7 +22,11 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { CDAGDetail, CDAGTaskStatus } from '@/api/client'
 
-// ─── colour palette ──────────────────────────────────────────────────────────
+// ─── colour palette (light / dark) ──────────────────────────────────────────
+
+function isDark() {
+  return document.documentElement.classList.contains('dark')
+}
 
 function taskPhase(status?: CDAGTaskStatus): string {
   if (!status) return 'Pending'
@@ -31,28 +35,44 @@ function taskPhase(status?: CDAGTaskStatus): string {
   return 'Running'
 }
 
-const phaseBg: Record<string, string> = {
-  Pending:  '#1f2937',
-  Running:  '#78350f',
-  Degraded: '#4a1d96',
-  Failed:   '#7f1d1d',
+function phaseBgColor(phase: string): string {
+  const dark: Record<string, string> = { Pending: '#1f2937', Running: '#78350f', Degraded: '#4a1d96', Failed: '#7f1d1d' }
+  const light: Record<string, string> = { Pending: '#f3f4f6', Running: '#fef3c7', Degraded: '#ede9fe', Failed: '#fee2e2' }
+  return (isDark() ? dark : light)[phase] ?? (isDark() ? '#1f2937' : '#f3f4f6')
 }
+
 const phaseBorder: Record<string, string> = {
   Pending:  '#4b5563',
   Running:  '#f59e0b',
   Degraded: '#a78bfa',
   Failed:   '#ef4444',
 }
-const phaseText: Record<string, string> = {
-  Pending:  '#9ca3af',
-  Running:  '#fcd34d',
-  Degraded: '#c4b5fd',
-  Failed:   '#f87171',
+
+function phaseTextColor(phase: string): string {
+  const dark: Record<string, string> = { Pending: '#9ca3af', Running: '#fcd34d', Degraded: '#c4b5fd', Failed: '#f87171' }
+  const light: Record<string, string> = { Pending: '#6b7280', Running: '#b45309', Degraded: '#7c3aed', Failed: '#dc2626' }
+  return (isDark() ? dark : light)[phase] ?? '#6b7280'
 }
 
-function bg(phase: string)     { return phaseBg[phase]     ?? phaseBg.Pending }
+function cardTextColor(): string { return isDark() ? '#f9fafb' : '#111827' }
+function labelColor(): string { return isDark() ? '#6b7280' : '#9ca3af' }
+function valueColor(): string { return isDark() ? '#e5e7eb' : '#374151' }
+function tooltipBg(): string { return isDark() ? '#111827' : '#ffffff' }
+function tooltipShadow(): string { return isDark() ? '0 8px 24px rgba(0,0,0,0.6)' : '0 8px 24px rgba(0,0,0,0.12)' }
+function chipBg(): string { return isDark() ? '#1f2937' : '#f3f4f6' }
+function chipBorder(): string { return isDark() ? '#374151' : '#d1d5db' }
+function chipText(): string { return isDark() ? '#9ca3af' : '#6b7280' }
+function constraintColor(): string { return isDark() ? '#4b5563' : '#9ca3af' }
+function gridColor(): string { return isDark() ? '#1f2937' : '#e5e7eb' }
+function controlsBg(): string { return isDark() ? '#111827' : '#ffffff' }
+function controlsBorder(): string { return isDark() ? '#374151' : '#d1d5db' }
+function minimapBg(): string { return isDark() ? '#111827' : '#f9fafb' }
+function minimapMask(): string { return isDark() ? 'rgba(0,0,0,0.5)' : 'rgba(200,200,200,0.5)' }
+function edgeDefaultColor(): string { return isDark() ? '#4b5563' : '#d1d5db' }
+
+function bg(phase: string)     { return phaseBgColor(phase) }
 function border(phase: string) { return phaseBorder[phase] ?? phaseBorder.Pending }
-function txt(phase: string)    { return phaseText[phase]   ?? phaseText.Pending }
+function txt(phase: string)    { return phaseTextColor(phase) }
 
 // ─── custom node ─────────────────────────────────────────────────────────────
 
@@ -82,7 +102,7 @@ function CDAGTaskNode({ data }: NodeProps) {
         borderRadius: 10,
         minWidth: 160,
         padding: '10px 14px',
-        color: '#f9fafb',
+        color: cardTextColor(),
         boxShadow: `0 0 12px ${border(phase)}44`,
         cursor: 'default',
       }}
@@ -90,19 +110,19 @@ function CDAGTaskNode({ data }: NodeProps) {
       {d.hasDeps       && <Handle type="target" position={Position.Left}  style={{ background: border(phase), border: 'none', width: 10, height: 10 }} />}
       {d.hasDownstream && <Handle type="source" position={Position.Right} style={{ background: border(phase), border: 'none', width: 10, height: 10 }} />}
 
-      <div className="font-semibold text-sm text-white mb-1 truncate" style={{ maxWidth: 180 }}>
+      <div className="font-semibold text-sm text-on mb-1 truncate" style={{ maxWidth: 180 }}>
         {d.taskName}
       </div>
       <div className="text-xs font-medium mb-1" style={{ color: txt(phase) }}>
         {d.readyReplicas}/{d.desiredReplicas} ready
       </div>
       {d.nodeName && (
-        <div className="text-xs" style={{ color: '#6b7280' }}>
+        <div className="text-xs" style={{ color: labelColor() }}>
           {d.nodeName}
         </div>
       )}
       {d.constraints && d.constraints.length > 0 && (
-        <div className="text-xs mt-1" style={{ color: '#4b5563' }}>
+        <div className="text-xs mt-1" style={{ color: constraintColor() }}>
           {'↦ '}{d.constraints.join(', ')}
         </div>
       )}
@@ -114,11 +134,11 @@ function CDAGTaskNode({ data }: NodeProps) {
           bottom: 'calc(100% + 10px)',
           transform: 'translateX(-50%)',
           minWidth: 220,
-          background: '#111827',
+          background: tooltipBg(),
           border: `1px solid ${border(phase)}`,
           borderRadius: 8,
           padding: '10px 14px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+          boxShadow: tooltipShadow(),
         }}
       >
         <div
@@ -140,24 +160,24 @@ function CDAGTaskNode({ data }: NodeProps) {
         </div>
 
         <div className="text-xs space-y-1.5">
-          <div className="font-semibold text-white text-sm mb-2">{d.taskName}</div>
+          <div className="font-semibold text-on text-sm mb-2">{d.taskName}</div>
           <Row label="Status"   value={phase}             color={txt(phase)} />
           <Row label="Replicas" value={`${d.readyReplicas} / ${d.desiredReplicas}`} />
           {d.nodeName && <Row label="Node" value={d.nodeName} />}
 
           {d.image && (
-            <div className="border-t border-gray-700 pt-1.5 mt-1.5">
-              <span className="text-gray-500">image: </span>
-              <span className="text-gray-300 break-all">{d.image.split('/').pop()}</span>
+            <div className="border-t border-line pt-1.5 mt-1.5">
+              <span className="text-on-faint">image: </span>
+              <span className="text-on-secondary break-all">{d.image.split('/').pop()}</span>
             </div>
           )}
 
           {d.constraints && d.constraints.length > 0 && (
-            <div className="border-t border-gray-700 pt-1.5 mt-1.5">
-              <div className="text-gray-500 mb-1">allowed nodes:</div>
+            <div className="border-t border-line pt-1.5 mt-1.5">
+              <div className="text-on-faint mb-1">allowed nodes:</div>
               <div className="flex flex-wrap gap-1">
                 {d.constraints.map((n: string) => (
-                  <span key={n} style={{ background: '#1f2937', border: '1px solid #374151', borderRadius: 4, padding: '1px 6px', color: '#9ca3af', fontSize: 11 }}>{n}</span>
+                  <span key={n} style={{ background: chipBg(), border: `1px solid ${chipBorder()}`, borderRadius: 4, padding: '1px 6px', color: chipText(), fontSize: 11 }}>{n}</span>
                 ))}
               </div>
             </div>
@@ -171,8 +191,8 @@ function CDAGTaskNode({ data }: NodeProps) {
 function Row({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="flex justify-between gap-3">
-      <span style={{ color: '#6b7280' }}>{label}</span>
-      <span style={{ color: color ?? '#e5e7eb', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+      <span style={{ color: labelColor() }}>{label}</span>
+      <span style={{ color: color ?? valueColor(), fontVariantNumeric: 'tabular-nums' }}>{value}</span>
     </div>
   )
 }
@@ -276,7 +296,7 @@ function CDAGGraphInner({ cdag }: Props) {
             stroke: depPhase === 'Running'   ? '#f59e0b'
                   : depPhase === 'Degraded'  ? '#a78bfa'
                   : depPhase === 'Failed'    ? '#ef4444'
-                  : '#4b5563',
+                  : edgeDefaultColor(),
             strokeWidth: 2,
           },
         }
@@ -288,7 +308,7 @@ function CDAGGraphInner({ cdag }: Props) {
   const onInit = useCallback(() => { fitView({ padding: 0.2 }) }, [fitView])
 
   return (
-    <div style={{ height: 480 }} className="rounded-xl overflow-hidden border border-gray-800 bg-gray-950">
+    <div style={{ height: 480 }} className="rounded-xl overflow-hidden border border-line bg-surface">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -300,12 +320,12 @@ function CDAGGraphInner({ cdag }: Props) {
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        <Background color="#1f2937" gap={20} size={1} />
-        <Controls style={{ background: '#111827', border: '1px solid #374151' }} />
+        <Background color={gridColor()} gap={20} size={1} />
+        <Controls style={{ background: controlsBg(), border: `1px solid ${controlsBorder()}` }} />
         <MiniMap
           nodeColor={n => bg((n.data as CDAGNodeData).phase)}
-          style={{ background: '#111827', border: '1px solid #374151' }}
-          maskColor="rgba(0,0,0,0.5)"
+          style={{ background: minimapBg(), border: `1px solid ${controlsBorder()}` }}
+          maskColor={minimapMask()}
         />
       </ReactFlow>
     </div>

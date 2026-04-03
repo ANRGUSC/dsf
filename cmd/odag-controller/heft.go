@@ -5,43 +5,6 @@ import (
 	"sort"
 )
 
-// Default bandwidth for node pairs not in the bandwidth matrix.
-const heftDefaultBandwidth = 125_000_000.0 // 125 MB/s (1 Gbps)
-
-// heftBandwidthMatrix defines per-link bandwidth in bytes/second.
-// Key: "srcNode->dstNode". If a pair is missing, heftDefaultBandwidth is used.
-// This reflects the actual tc-shaped network topology.
-var heftBandwidthMatrix = map[string]float64{
-	// anrg-3 ↔ anrg-5: 500 Mbps = 62.5 MB/s
-	"anrg-3->anrg-5": 62_500_000,
-	"anrg-5->anrg-3": 62_500_000,
-	// anrg-4 ↔ anrg-5: 500 Mbps = 62.5 MB/s
-	"anrg-4->anrg-5": 62_500_000,
-	"anrg-5->anrg-4": 62_500_000,
-	// anrg-3 ↔ anrg-6: 100 Mbps = 12.5 MB/s
-	"anrg-3->anrg-6": 12_500_000,
-	"anrg-6->anrg-3": 12_500_000,
-	// anrg-4 ↔ anrg-6: 100 Mbps = 12.5 MB/s
-	"anrg-4->anrg-6": 12_500_000,
-	"anrg-6->anrg-4": 12_500_000,
-	// anrg-5 ↔ anrg-6: 100 Mbps = 12.5 MB/s
-	"anrg-5->anrg-6": 12_500_000,
-	"anrg-6->anrg-5": 12_500_000,
-	// anrg-3 ↔ anrg-4: 1 Gbps (default, no entry needed)
-}
-
-// linkBandwidth returns the bandwidth in bytes/sec between two nodes.
-func linkBandwidth(src, dst string) float64 {
-	if src == dst {
-		return 0 // same node: no transfer
-	}
-	key := src + "->" + dst
-	if bw, ok := heftBandwidthMatrix[key]; ok {
-		return bw
-	}
-	return heftDefaultBandwidth
-}
-
 // heftAssignTasks implements the HEFT (Heterogeneous Earliest Finish Time) algorithm
 // with heterogeneous link bandwidth awareness.
 //
@@ -53,7 +16,16 @@ func linkBandwidth(src, dst string) float64 {
 //     EST(t,p) = max(nodeAvail[p], max_pred(taskFinish[pred] + commCost(pred→t)))
 //     commCost uses actual per-link bandwidth between the assigned pred node and candidate node.
 //     EFT(t,p) = EST(t,p) + runtime(t)
-func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]nodeInfo {
+
+// runtimeResolver returns the expected runtime (seconds) for a task on a given node.
+// If nil is passed, the task's scalar Runtime field is used (backward compatible).
+type runtimeResolver func(taskName, nodeName string) float64
+
+// dataSizeResolver returns the expected output data size (bytes) for a task on a given node.
+// If nil is passed, the task's DataSize spec field is used (backward compatible).
+type dataSizeResolver func(taskName, nodeName string) int64
+
+func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) map[string]nodeInfo {
 	if len(tasks) == 0 {
 		return map[string]nodeInfo{}
 	}
@@ -75,13 +47,69 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 		}
 	}
 
+	// Helper closures for resolving runtime, data size, and bandwidth.
+	resolveRuntime := func(taskName, nodeName string) float64 {
+		if rtResolver != nil {
+			return rtResolver(taskName, nodeName)
+		}
+		return taskByName[taskName].Runtime
+	}
+	resolveDataSizeBytes := func(taskName, nodeName string) int64 {
+		if dsResolver != nil {
+			return dsResolver(taskName, nodeName)
+		}
+		return parseDataSizeBytes(taskByName[taskName].DataSize)
+	}
+	resolveBandwidth := func(src, dst string) float64 {
+		if src == dst {
+			return 0
+		}
+		if bwResolver != nil {
+			return bwResolver(src, dst)
+		}
+		return heftDefaultBandwidth
+	}
+
 	// Compute average bandwidth across all node pairs for rank estimation.
-	avgBandwidth := computeAvgBandwidth(nodeMap)
+	avgBandwidth := computeAvgBandwidth(nodeMap, resolveBandwidth)
+
+	// Average runtime across all candidate nodes (used for rank computation
+	// where placement is not yet known).
+	avgRuntime := func(taskName string) float64 {
+		if rtResolver == nil {
+			return taskByName[taskName].Runtime
+		}
+		total := 0.0
+		count := 0
+		for nodeName := range nodeMap {
+			total += resolveRuntime(taskName, nodeName)
+			count++
+		}
+		if count == 0 {
+			return taskByName[taskName].Runtime
+		}
+		return total / float64(count)
+	}
 
 	// commCostEstimate returns the communication cost (seconds) for data produced
 	// by taskName, assuming average cross-node bandwidth (used during rank computation).
+	// Uses average data size across nodes when a resolver is available.
 	commCostEstimate := func(taskName string) float64 {
-		bytes := parseDataSizeBytes(taskByName[taskName].DataSize)
+		var bytes int64
+		if dsResolver != nil {
+			// Average across nodes for rank estimation.
+			total := int64(0)
+			count := 0
+			for nodeName := range nodeMap {
+				total += resolveDataSizeBytes(taskName, nodeName)
+				count++
+			}
+			if count > 0 {
+				bytes = total / int64(count)
+			}
+		} else {
+			bytes = parseDataSizeBytes(taskByName[taskName].DataSize)
+		}
 		if bytes == 0 {
 			return 0
 		}
@@ -95,7 +123,6 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 		if v, ok := rank[name]; ok {
 			return v
 		}
-		t := taskByName[name]
 		maxSuccCost := 0.0
 		for _, s := range successors[name] {
 			cost := commCostEstimate(name) + computeRank(s)
@@ -103,7 +130,7 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 				maxSuccCost = cost
 			}
 		}
-		r := t.Runtime + maxSuccCost
+		r := avgRuntime(name) + maxSuccCost
 		rank[name] = r
 		return r
 	}
@@ -166,8 +193,8 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 				if depNode != "" && depNode == nodeName {
 					commCost = 0 // same node: no transfer cost
 				} else {
-					bytes := parseDataSizeBytes(taskByName[dep].DataSize)
-					bw := linkBandwidth(depNode, nodeName)
+					bytes := resolveDataSizeBytes(dep, depNode)
+					bw := resolveBandwidth(depNode, nodeName)
 					commCost = float64(bytes) / bw
 				}
 
@@ -176,7 +203,7 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 				}
 			}
 
-			eft := est + t.Runtime
+			eft := est + resolveRuntime(name, nodeName)
 			if bestNode == "" || eft < bestEFT {
 				bestNode = nodeName
 				bestEFT = eft
@@ -188,6 +215,7 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 		nodeAvail[bestNode] = bestEFT
 		result[name] = nodeMap[bestNode]
 
+
 		log.Printf("[heft] %-20s rank=%.1f -> %-10s EFT=%.1fs", name, rank[name], bestNode, bestEFT)
 	}
 
@@ -196,7 +224,7 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo) map[string]n
 
 // computeAvgBandwidth returns the mean bandwidth across all distinct node pairs.
 // Used for rank estimation where we don't yet know placements.
-func computeAvgBandwidth(nodeMap map[string]nodeInfo) float64 {
+func computeAvgBandwidth(nodeMap map[string]nodeInfo, resolveBandwidth func(string, string) float64) float64 {
 	nodes := make([]string, 0, len(nodeMap))
 	for n := range nodeMap {
 		nodes = append(nodes, n)
@@ -208,7 +236,7 @@ func computeAvgBandwidth(nodeMap map[string]nodeInfo) float64 {
 	count := 0
 	for i, a := range nodes {
 		for _, b := range nodes[i+1:] {
-			total += linkBandwidth(a, b)
+			total += resolveBandwidth(a, b)
 			count++
 		}
 	}

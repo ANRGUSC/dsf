@@ -77,6 +77,12 @@ class DSFTask:
         Expected wall-clock runtime in seconds from the ODAG spec (DSF_RUNTIME).
     expected_data_size : int
         Expected output size in bytes from the ODAG spec (DSF_DATA_SIZE).
+    template_name : str
+        Name of the ODAGTemplate this run was created from, or empty string
+        if submitted directly (DSF_TEMPLATE_NAME).
+    run_id : str
+        Run number within the template (e.g. "3"), or empty string if not
+        a template run (DSF_RUN_ID).
     """
 
     def __init__(self) -> None:
@@ -94,6 +100,9 @@ class DSFTask:
 
         self.expected_runtime: float = float(os.environ.get("DSF_RUNTIME", "0") or "0")
         self.expected_data_size: int = int(os.environ.get("DSF_DATA_SIZE", "0") or "0")
+
+        self.template_name: str = os.environ.get("DSF_TEMPLATE_NAME", "")
+        self.run_id: str = os.environ.get("DSF_RUN_ID", "")
 
         self._transport = build_transport()
         pattern = os.environ.get("DSF_TRANSPORT_PATTERN", "pushpull")

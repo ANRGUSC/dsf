@@ -21,10 +21,32 @@ type predictedTaskEntry struct {
 //
 // Communication cost: dataSize(dep) / heftBandwidth for cross-node, 0 for same-node.
 // Node contention: if two tasks share a node, the later one waits for the earlier.
-func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo) []predictedTaskEntry {
+func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) []predictedTaskEntry {
 	taskByName := make(map[string]*taskSpec, len(tasks))
 	for i := range tasks {
 		taskByName[tasks[i].Name] = &tasks[i]
+	}
+
+	resolveRuntime := func(taskName, nodeName string) float64 {
+		if rtResolver != nil {
+			return rtResolver(taskName, nodeName)
+		}
+		return taskByName[taskName].Runtime
+	}
+	resolveDataSizeBytes := func(taskName, nodeName string) int64 {
+		if dsResolver != nil {
+			return dsResolver(taskName, nodeName)
+		}
+		return parseDataSizeBytes(taskByName[taskName].DataSize)
+	}
+	resolveBandwidth := func(src, dst string) float64 {
+		if src == dst {
+			return 0
+		}
+		if bwResolver != nil {
+			return bwResolver(src, dst)
+		}
+		return heftDefaultBandwidth
 	}
 
 	nodeAvail := make(map[string]float64)
@@ -58,8 +80,8 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo) [
 				depNode := assignMap[dep].name
 				var commCost float64
 				if depNode != nodeName {
-					bytes := parseDataSizeBytes(taskByName[dep].DataSize)
-					bw := linkBandwidth(depNode, nodeName)
+					bytes := resolveDataSizeBytes(dep, depNode)
+					bw := resolveBandwidth(depNode, nodeName)
 					commCost = float64(bytes) / bw
 				}
 				if ready := depFinish + commCost; ready > est {
@@ -67,7 +89,7 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo) [
 				}
 			}
 
-			eft := est + t.Runtime
+			eft := est + resolveRuntime(t.Name, nodeName)
 			nodeAvail[nodeName] = eft
 			taskFinish[t.Name] = eft
 			scheduled[t.Name] = true

@@ -16,6 +16,13 @@ rules:
   - apiGroups: ["dsf.io"]
     resources: ["odags/status", "cdags/status"]
     verbs: ["get"]
+  # ODAGTemplate CRDs (read + create runs)
+  - apiGroups: ["dsf.io"]
+    resources: ["odagtemplates"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["dsf.io"]
+    resources: ["odagtemplates/status"]
+    verbs: ["get"]
   # Pods (read-only, for log links and task node info)
   - apiGroups: [""]
     resources: ["pods", "pods/log"]

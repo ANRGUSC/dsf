@@ -1,6 +1,17 @@
 import type { ODAGDetail } from '@/api/client'
 import { ODAG_COLORS, BATCH_PRESETS } from '@/data/batchPresets'
 
+function isDark() { return document.documentElement.classList.contains('dark') }
+function rowEven() { return isDark() ? '#0f172a' : '#f9fafb' }
+function rowOdd() { return isDark() ? '#111827' : '#f3f4f6' }
+function gridStroke() { return isDark() ? '#1f2937' : '#e5e7eb' }
+function axisStroke() { return isDark() ? '#374151' : '#d1d5db' }
+function labelFill() { return isDark() ? '#9ca3af' : '#6b7280' }
+function tickFill() { return isDark() ? '#6b7280' : '#9ca3af' }
+function barTextDark() { return isDark() ? '#0f172a' : '#ffffff' }
+function legendFill() { return isDark() ? '#9ca3af' : '#6b7280' }
+function legendSmallFill() { return isDark() ? '#6b7280' : '#9ca3af' }
+
 interface Props {
   odags: ODAGDetail[]
 }
@@ -18,7 +29,7 @@ interface Bar {
 
 export default function BatchGanttChart({ odags }: Props) {
   if (!odags || odags.length === 0) {
-    return <p className="text-gray-500 text-sm">No schedule data yet.</p>
+    return <p className="text-on-faint text-sm">No schedule data yet.</p>
   }
 
   const nameIndex = new Map(BATCH_PRESETS.map((p, i) => [p.name, i]))
@@ -26,7 +37,7 @@ export default function BatchGanttChart({ odags }: Props) {
   // Compute a shared reference time: earliest createdAt across all ODAGs.
   const timestamps = odags.map(o => new Date(o.createdAt).getTime()).filter(t => !isNaN(t))
   if (timestamps.length === 0) {
-    return <p className="text-gray-500 text-sm">Waiting for schedule data...</p>
+    return <p className="text-on-faint text-sm">Waiting for schedule data...</p>
   }
   const refMs = Math.min(...timestamps)
 
@@ -78,7 +89,7 @@ export default function BatchGanttChart({ odags }: Props) {
   }
 
   if (bars.length === 0) {
-    return <p className="text-gray-500 text-sm">Waiting for schedule data...</p>
+    return <p className="text-on-faint text-sm">Waiting for schedule data...</p>
   }
 
   // Group bars by node, then by odagIdx within each node to create lanes.
@@ -149,7 +160,7 @@ export default function BatchGanttChart({ odags }: Props) {
             key={node}
             x={ML} y={nodeY[node]}
             width={innerW} height={nodeHeight[node]}
-            fill={i % 2 === 0 ? '#0f172a' : '#111827'}
+            fill={i % 2 === 0 ? rowEven() : rowOdd()}
           />
         ))}
 
@@ -159,7 +170,7 @@ export default function BatchGanttChart({ odags }: Props) {
             key={t}
             x1={ML + xs(t)} y1={MT}
             x2={ML + xs(t)} y2={MT + innerH}
-            stroke="#1f2937" strokeWidth={1}
+            stroke={gridStroke()} strokeWidth={1}
           />
         ))}
 
@@ -171,7 +182,7 @@ export default function BatchGanttChart({ odags }: Props) {
             y={nodeY[node] + nodeHeight[node] / 2}
             textAnchor="end"
             dominantBaseline="middle"
-            fill="#9ca3af"
+            fill={labelFill()}
             fontSize={11}
           >
             {node}
@@ -203,7 +214,7 @@ export default function BatchGanttChart({ odags }: Props) {
                     <text
                       x={x + 3} y={y + BAR_H / 2}
                       dominantBaseline="middle"
-                      fill={isPred ? b.color : '#0f172a'}
+                      fill={isPred ? b.color : barTextDark()}
                       fillOpacity={isPred ? 0.7 : 1}
                       fontWeight={isPred ? 'normal' : 'bold'}
                       fontSize={8}
@@ -225,19 +236,19 @@ export default function BatchGanttChart({ odags }: Props) {
         <line
           x1={ML} y1={MT + innerH}
           x2={ML + innerW} y2={MT + innerH}
-          stroke="#374151" strokeWidth={1}
+          stroke={axisStroke()} strokeWidth={1}
         />
         {ticks.filter(t => t <= maxTime + step).map(t => (
           <g key={`xtick-${t}`}>
             <line
               x1={ML + xs(t)} y1={MT + innerH}
               x2={ML + xs(t)} y2={MT + innerH + 5}
-              stroke="#374151"
+              stroke={axisStroke()}
             />
             <text
               x={ML + xs(t)} y={MT + innerH + 16}
               textAnchor="middle"
-              fill="#6b7280"
+              fill={tickFill()}
               fontSize={10}
             >
               {t}s
@@ -252,7 +263,7 @@ export default function BatchGanttChart({ odags }: Props) {
             return (
               <g key={p.name} transform={`translate(${x}, 0)`}>
                 <rect x={0} y={0} width={12} height={10} fill={ODAG_COLORS[i]} fillOpacity={0.85} rx={2} />
-                <text x={16} y={5} dominantBaseline="middle" fill="#9ca3af" fontSize={10}>
+                <text x={16} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={10}>
                   {p.name}
                 </text>
               </g>
@@ -261,9 +272,9 @@ export default function BatchGanttChart({ odags }: Props) {
           <g transform="translate(0, 16)">
             <rect x={0} y={0} width={12} height={8} fill="#9ca3af" fillOpacity={0.18}
               stroke="#9ca3af" strokeDasharray="4 2" strokeWidth={1} rx={1} />
-            <text x={16} y={4} dominantBaseline="middle" fill="#6b7280" fontSize={10}>Predicted</text>
+            <text x={16} y={4} dominantBaseline="middle" fill={legendSmallFill()} fontSize={10}>Predicted</text>
             <rect x={90} y={0} width={12} height={8} fill="#9ca3af" fillOpacity={0.85} rx={1} />
-            <text x={106} y={4} dominantBaseline="middle" fill="#6b7280" fontSize={10}>Actual</text>
+            <text x={106} y={4} dominantBaseline="middle" fill={legendSmallFill()} fontSize={10}>Actual</text>
           </g>
         </g>
       </svg>

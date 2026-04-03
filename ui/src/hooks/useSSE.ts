@@ -8,7 +8,7 @@ import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 interface SSEEvent {
-  resource: string   // "odags" | "cdags"
+  resource: string   // "odags" | "cdags" | "odagtemplates"
   eventType: string  // "ADDED" | "MODIFIED" | "DELETED"
   name: string
   namespace: string
@@ -30,6 +30,10 @@ export function useSSE() {
         } else if (ev.resource === 'cdags') {
           qc.invalidateQueries({ queryKey: ['cdags'] })
           qc.invalidateQueries({ queryKey: ['cdag', ev.namespace, ev.name] })
+        } else if (ev.resource === 'odagtemplates') {
+          qc.invalidateQueries({ queryKey: ['templates'] })
+          qc.invalidateQueries({ queryKey: ['template', ev.namespace, ev.name] })
+          qc.invalidateQueries({ queryKey: ['template-runs', ev.namespace, ev.name] })
         }
       } catch {
         // ignore malformed events

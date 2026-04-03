@@ -9,15 +9,15 @@ export default function CDAGList() {
     queryFn: api.listCDAGs,
   })
 
-  if (isLoading) return <p className="text-gray-400">Loading...</p>
-  if (error) return <p className="text-red-400">Error: {String(error)}</p>
+  if (isLoading) return <p className="text-on-muted">Loading...</p>
+  if (error) return <p className="text-red-500 dark:text-red-400">Error: {String(error)}</p>
 
   return (
     <div>
       <h1 className="text-lg font-semibold mb-4">Continuous DAGs</h1>
       <table className="w-full text-sm border-collapse">
         <thead>
-          <tr className="text-left text-gray-400 border-b border-gray-800">
+          <tr className="text-left text-on-muted border-b border-line">
             <th className="pb-2 pr-4">Name</th>
             <th className="pb-2 pr-4">Namespace</th>
             <th className="pb-2 pr-4">Phase</th>
@@ -29,26 +29,26 @@ export default function CDAGList() {
         <tbody>
           {cdags?.length === 0 && (
             <tr>
-              <td colSpan={6} className="pt-4 text-gray-500 text-center">
+              <td colSpan={6} className="pt-4 text-on-faint text-center">
                 No CDAGs found. Submit one with <code>dsf cdag submit -f cdag.yml</code>
               </td>
             </tr>
           )}
           {cdags?.map(cdag => (
-            <tr key={`${cdag.namespace}/${cdag.name}`} className="border-b border-gray-900 hover:bg-gray-900">
+            <tr key={`${cdag.namespace}/${cdag.name}`} className="border-b border-line-soft hover:bg-surface-alt">
               <td className="py-2 pr-4">
                 <Link
                   to={`/cdags/${cdag.namespace}/${cdag.name}`}
-                  className="text-blue-400 hover:text-blue-300"
+                  className="text-accent hover:text-accent-hover"
                 >
                   {cdag.name}
                 </Link>
               </td>
-              <td className="py-2 pr-4 text-gray-400">{cdag.namespace}</td>
+              <td className="py-2 pr-4 text-on-muted">{cdag.namespace}</td>
               <td className="py-2 pr-4"><StatusBadge phase={cdag.phase} /></td>
-              <td className="py-2 pr-4 text-gray-400">{cdag.scheduler}</td>
-              <td className="py-2 pr-4 text-gray-400">{cdag.taskCount}</td>
-              <td className="py-2 text-gray-500">{formatAge(cdag.createdAt)}</td>
+              <td className="py-2 pr-4 text-on-muted">{cdag.scheduler}</td>
+              <td className="py-2 pr-4 text-on-muted">{cdag.taskCount}</td>
+              <td className="py-2 text-on-faint">{formatAge(cdag.createdAt)}</td>
             </tr>
           ))}
         </tbody>

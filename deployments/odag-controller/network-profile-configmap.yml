@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dsf-network-profile
+  namespace: dsf-system
+data:
+  # Node-pair bandwidth in bytes/sec.
+  # Format: "srcNode_to_dstNode": "bytesPerSecond"
+  # Pairs not listed use defaultBandwidth.
+  #
+  # This reflects the tc-shaped network topology on the ANRG testbed.
+
+  # anrg-3 <-> anrg-5: 500 Mbps = 62.5 MB/s
+  anrg-3_to_anrg-5: "62500000"
+  anrg-5_to_anrg-3: "62500000"
+  # anrg-4 <-> anrg-5: 500 Mbps = 62.5 MB/s
+  anrg-4_to_anrg-5: "62500000"
+  anrg-5_to_anrg-4: "62500000"
+  # anrg-3 <-> anrg-6: 100 Mbps = 12.5 MB/s
+  anrg-3_to_anrg-6: "12500000"
+  anrg-6_to_anrg-3: "12500000"
+  # anrg-4 <-> anrg-6: 100 Mbps = 12.5 MB/s
+  anrg-4_to_anrg-6: "12500000"
+  anrg-6_to_anrg-4: "12500000"
+  # anrg-5 <-> anrg-6: 100 Mbps = 12.5 MB/s
+  anrg-5_to_anrg-6: "12500000"
+  anrg-6_to_anrg-5: "12500000"
+
+  # Default for unlisted pairs (1 Gbps = 125 MB/s)
+  defaultBandwidth: "125000000"

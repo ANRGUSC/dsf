@@ -9,12 +9,19 @@ package main
 //	dsf odag status  <name> [-n <ns>]    Show detailed status of an ODAG
 //	dsf odag delete  <name> [-n <ns>]    Delete an ODAG and its resources
 //	dsf odag logs    <name> <task> [-n <ns>]  Stream logs from a task pod
+//	dsf odag run     <template> [-n <ns>]     Create a new run from a template
+//	dsf odag runs    <template> [-n <ns>]     List all runs of a template
 //
 //	dsf cdag submit  -f <file>           Submit a CDAG from a YAML file
 //	dsf cdag list    [-n <ns>]           List all CDAGs
 //	dsf cdag status  <name> [-n <ns>]    Show detailed status of a CDAG
 //	dsf cdag delete  <name> [-n <ns>]    Delete a CDAG and its resources
 //	dsf cdag logs    <name> <task> [-n <ns>]  Stream logs from a task pod
+//
+//	dsf template apply   -f <file>       Register an ODAGTemplate
+//	dsf template list    [-n <ns>]       List ODAGTemplates
+//	dsf template show    <name> [-n <ns>]  Show template detail + profile summary
+//	dsf template delete  <name> [-n <ns>]  Delete an ODAGTemplate
 
 import (
 	"bufio"
@@ -40,8 +47,9 @@ import (
 )
 
 var (
-	odagGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
-	cdagGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
+	odagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
+	cdagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
+	odagTemplateGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odagtemplates"}
 )
 
 // globals set by persistent flags
@@ -71,7 +79,7 @@ inter-task communication. Specs are applied as Kubernetes custom resources
 	}
 	root.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", defaultKubeconfig(), "path to kubeconfig")
 
-	root.AddCommand(odagCmd(), cdagCmd())
+	root.AddCommand(odagCmd(), cdagCmd(), templateCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -145,7 +153,29 @@ or Failed when all tasks finish.`,
 	}
 	logs.Flags().StringVarP(&namespace, "namespace", "n", "default", "namespace")
 
-	cmd.AddCommand(submit, list, status, del, logs)
+	run := &cobra.Command{
+		Use:   "run <template-name>",
+		Short: "Create a new run from an ODAGTemplate",
+		Long:  "Fetches the named ODAGTemplate and creates a new ODAG run with an auto-incremented ID.",
+		Example: `  dsf odag run dag-pipeline
+  dsf odag run dag-pipeline -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: odagRunFromTemplate,
+	}
+	run.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	runs := &cobra.Command{
+		Use:   "runs <template-name>",
+		Short: "List all runs of an ODAGTemplate",
+		Long:  "List all ODAG runs created from a template, showing run number, phase, makespan, and age.",
+		Example: `  dsf odag runs dag-pipeline
+  dsf odag runs dag-pipeline -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: odagListRuns,
+	}
+	runs.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	cmd.AddCommand(submit, list, status, del, logs, run, runs)
 	return cmd
 }
 
@@ -497,6 +527,351 @@ func streamLogs(labelKey string) func(*cobra.Command, []string) error {
 			fmt.Println(scanner.Text())
 		}
 		return scanner.Err()
+	}
+}
+
+// ─── Template commands ────────────────────────────────────────────────────────
+
+func templateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "template",
+		Short: "Manage ODAG templates",
+		Long: `Manage ODAGTemplates — reusable DAG definitions with profiling.
+
+An ODAGTemplate defines a DAG structure without executing it. Use "dsf odag run"
+to create runs from a template. The profiler records actual runtimes per
+(task, node) pair after each run, improving HEFT scheduling over time.`,
+	}
+
+	apply := &cobra.Command{
+		Use:   "apply -f <file>",
+		Short: "Register an ODAGTemplate from a YAML file",
+		Long:  "Create or update an ODAGTemplate custom resource from a YAML spec file.",
+		Example: `  dsf template apply -f examples/dag-pipeline/template.yml
+  dsf template apply -f my-template.yml`,
+		RunE: submitResource(odagTemplateGVR),
+	}
+	apply.Flags().StringVarP(&filename, "file", "f", "", "path to ODAGTemplate YAML (required)")
+	apply.MarkFlagRequired("file")
+
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List ODAGTemplates",
+		Long:  "List all ODAGTemplates in a namespace.",
+		Example: `  dsf template list
+  dsf template list -n dsf-system`,
+		RunE: templateList,
+	}
+	list.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	show := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show ODAGTemplate detail",
+		Long:  "Show detailed information about an ODAGTemplate including profiling config, tasks, and profile summary.",
+		Example: `  dsf template show dag-pipeline
+  dsf template show dag-pipeline -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: templateShow,
+	}
+	show.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	del := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete an ODAGTemplate",
+		Long:  "Delete an ODAGTemplate custom resource.",
+		Example: `  dsf template delete dag-pipeline
+  dsf template delete dag-pipeline -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			dc, err := dynClient()
+			if err != nil {
+				return err
+			}
+			if err = dc.Resource(odagTemplateGVR).Namespace(namespace).Delete(
+				context.Background(), name, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("delete template %s: %w", name, err)
+			}
+			fmt.Printf("template/%s deleted\n", name)
+			return nil
+		},
+	}
+	del.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	cmd.AddCommand(apply, list, show, del)
+	return cmd
+}
+
+func templateList(cmd *cobra.Command, args []string) error {
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+	list, err := dc.Resource(odagTemplateGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSCHEDULER\tTASKS\tRUNS\tLAST MAKESPAN\tPROFILING\tAGE")
+	for _, item := range list.Items {
+		scheduler, _, _ := unstructured.NestedString(item.Object, "spec", "scheduler")
+		tasks, _, _ := unstructured.NestedSlice(item.Object, "spec", "tasks")
+		runCount, _, _ := unstructured.NestedInt64(item.Object, "status", "runCount")
+		makespan, _, _ := unstructured.NestedFloat64(item.Object, "status", "lastRunMakespan")
+		profiling, _, _ := unstructured.NestedBool(item.Object, "spec", "profiling", "enabled")
+		age := fmtAge(item.GetCreationTimestamp().Time)
+
+		makespanStr := "-"
+		if makespan > 0 {
+			makespanStr = fmt.Sprintf("%.1fs", makespan)
+		}
+		profilingStr := "yes"
+		// If explicitly set to false
+		if p, ok, _ := unstructured.NestedBool(item.Object, "spec", "profiling", "enabled"); ok && !p {
+			profilingStr = "no"
+		}
+		_ = profiling
+
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\t%s\n",
+			item.GetName(), scheduler, len(tasks), runCount, makespanStr, profilingStr, age)
+	}
+	return w.Flush()
+}
+
+func templateShow(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+	obj, err := dc.Resource(odagTemplateGVR).Namespace(namespace).Get(
+		context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	scheduler, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
+	desc, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
+	runCount, _, _ := unstructured.NestedInt64(obj.Object, "status", "runCount")
+	lastRunName, _, _ := unstructured.NestedString(obj.Object, "status", "lastRunName")
+	lastRunPhase, _, _ := unstructured.NestedString(obj.Object, "status", "lastRunPhase")
+	lastMakespan, _, _ := unstructured.NestedFloat64(obj.Object, "status", "lastRunMakespan")
+
+	fmt.Printf("Name:         %s\n", name)
+	fmt.Printf("Namespace:    %s\n", namespace)
+	if desc != "" {
+		fmt.Printf("Description:  %s\n", desc)
+	}
+	fmt.Printf("Scheduler:    %s\n", scheduler)
+	fmt.Printf("Runs:         %d\n", runCount)
+	if lastRunName != "" {
+		fmt.Printf("Last Run:     %s (%s, %.1fs)\n", lastRunName, lastRunPhase, lastMakespan)
+	}
+
+	// Profiling config
+	fmt.Println("\nProfiling:")
+	enabled := true
+	if v, ok, _ := unstructured.NestedBool(obj.Object, "spec", "profiling", "enabled"); ok {
+		enabled = v
+	}
+	fmt.Printf("  Enabled:      %v\n", enabled)
+	if warmup, ok, _ := unstructured.NestedInt64(obj.Object, "spec", "profiling", "warmupRuns"); ok {
+		fmt.Printf("  Warmup Runs:  %d\n", warmup)
+	}
+	if minS, ok, _ := unstructured.NestedInt64(obj.Object, "spec", "profiling", "minSamples"); ok {
+		fmt.Printf("  Min Samples:  %d\n", minS)
+	}
+	if alpha, ok, _ := unstructured.NestedFloat64(obj.Object, "spec", "profiling", "emaAlpha"); ok {
+		fmt.Printf("  EMA Alpha:    %.2f\n", alpha)
+	}
+	if maxS, ok, _ := unstructured.NestedInt64(obj.Object, "spec", "profiling", "maxSamples"); ok {
+		fmt.Printf("  Max Samples:  %d\n", maxS)
+	}
+
+	// Tasks
+	specTasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	fmt.Printf("\nTasks (%d):\n", len(specTasks))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "  NAME\tIMAGE\tRUNTIME\tDATA SIZE\tDEPS\tCONSTRAINTS")
+	for _, t := range specTasks {
+		tm, ok := t.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		tname, _ := tm["name"].(string)
+		timage, _ := tm["image"].(string)
+
+		runtimeStr := "-"
+		if rt, ok := tm["runtime"].(int64); ok {
+			runtimeStr = fmt.Sprintf("%ds", rt)
+		} else if rt, ok := tm["runtime"].(float64); ok {
+			runtimeStr = fmt.Sprintf("%.0fs", rt)
+		}
+
+		dataSize, _ := tm["dataSize"].(string)
+		if dataSize == "" {
+			dataSize = "-"
+		}
+
+		deps, _ := tm["dependencies"].([]interface{})
+		depStr := "-"
+		if len(deps) > 0 {
+			names := make([]string, len(deps))
+			for i, d := range deps {
+				names[i] = fmt.Sprint(d)
+			}
+			depStr = fmt.Sprintf("%v", names)
+		}
+
+		constraints, _, _ := unstructured.NestedStringSlice(tm, "constraints", "nodeNames")
+		constraintStr := "-"
+		if len(constraints) > 0 {
+			constraintStr = fmt.Sprintf("%v", constraints)
+		}
+
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n",
+			tname, timage, runtimeStr, dataSize, depStr, constraintStr)
+	}
+	w.Flush()
+
+	// Profile summary
+	profileSummary, ok, _ := unstructured.NestedMap(obj.Object, "status", "profileSummary")
+	if ok && len(profileSummary) > 0 {
+		fmt.Println("\nProfile Summary (task → node → runtime):")
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(w, "  TASK\tNODE\tRUNTIME (EMA)")
+		for task, nodeMap := range profileSummary {
+			nm, ok := nodeMap.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for node, runtime := range nm {
+				fmt.Fprintf(w, "  %s\t%s\t%.2fs\n", task, node, toFloat64(runtime))
+			}
+		}
+		w.Flush()
+	}
+
+	return nil
+}
+
+// ─── ODAG run from template ──────────────────────────────────────────────────
+
+func odagRunFromTemplate(cmd *cobra.Command, args []string) error {
+	templateName := args[0]
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+
+	// Fetch the template.
+	tmpl, err := dc.Resource(odagTemplateGVR).Namespace(namespace).Get(
+		context.Background(), templateName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get template %s: %w", templateName, err)
+	}
+
+	// Determine next run number from existing runs.
+	existing, err := dc.Resource(odagGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("dsf.io/template=%s", templateName),
+		})
+	if err != nil {
+		return fmt.Errorf("list runs: %w", err)
+	}
+	runNum := len(existing.Items) + 1
+
+	odagName := fmt.Sprintf("%s-run-%03d", templateName, runNum)
+
+	// Extract spec from template, stripping template-only fields.
+	spec, _, err := unstructured.NestedMap(tmpl.Object, "spec")
+	if err != nil {
+		return fmt.Errorf("extract spec: %w", err)
+	}
+	delete(spec, "profiling")
+	delete(spec, "defaults")
+	delete(spec, "retention")
+	delete(spec, "description")
+
+	// Create ODAG CR.
+	odag := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "dsf.io/v1",
+			"kind":       "ODAG",
+			"metadata": map[string]interface{}{
+				"name":      odagName,
+				"namespace": namespace,
+				"labels": map[string]interface{}{
+					"dsf.io/template": templateName,
+					"dsf.io/run":      fmt.Sprintf("%d", runNum),
+				},
+			},
+			"spec": spec,
+		},
+	}
+
+	if _, err := dc.Resource(odagGVR).Namespace(namespace).Create(
+		context.Background(), odag, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create run: %w", err)
+	}
+
+	fmt.Printf("Created run %s (run #%d from template %s)\n", odagName, runNum, templateName)
+	return nil
+}
+
+func odagListRuns(cmd *cobra.Command, args []string) error {
+	templateName := args[0]
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+
+	list, err := dc.Resource(odagGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("dsf.io/template=%s", templateName),
+		})
+	if err != nil {
+		return err
+	}
+
+	if len(list.Items) == 0 {
+		fmt.Printf("No runs found for template %s in namespace %s\n", templateName, namespace)
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tRUN\tPHASE\tMAKESPAN\tAGE")
+	for _, item := range list.Items {
+		labels := item.GetLabels()
+		runNum := labels["dsf.io/run"]
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		if phase == "" {
+			phase = "Pending"
+		}
+		makespan, _, _ := unstructured.NestedFloat64(item.Object, "status", "makespan")
+		makespanStr := "-"
+		if makespan > 0 {
+			makespanStr = fmt.Sprintf("%.1fs", makespan)
+		}
+		age := fmtAge(item.GetCreationTimestamp().Time)
+		fmt.Fprintf(w, "%s\t#%s\t%s\t%s\t%s\n", item.GetName(), runNum, phase, makespanStr, age)
+	}
+	return w.Flush()
+}
+
+// toFloat64 converts an interface{} (int64, float64, json.Number) to float64.
+func toFloat64(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	default:
+		return 0
 	}
 }
 

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +56,10 @@ var assignmentCache sync.Map // "ns/name" -> map[string]nodeInfo
 // Updated by watchPods on every event, read by processReadyTasks.
 var podCache sync.Map // "ns/podName" -> *corev1.Pod
 
+// profilerDB is the SQLite database for task/link profiling.
+// Initialized in main(); nil if profiling is not configured.
+var profilerDB *sql.DB
+
 // processedODAGs prevents double-deploying the same ODAG on reconnect.
 var processedODAGs sync.Map // "ns/name" -> bool
 
@@ -61,9 +67,18 @@ var processedODAGs sync.Map // "ns/name" -> bool
 // so the status poller knows which ones to refresh.
 var runningODAGs sync.Map // "ns/name" -> bool
 
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func main() {
 	var kubeconfig string
+	var dbPath string
 	flag.StringVar(&kubeconfig, "kubeconfig", "", "path to kubeconfig (leave empty for in-cluster)")
+	flag.StringVar(&dbPath, "db", envOrDefault("DSF_PROFILER_DB", "/data/dsf-profiler.db"), "profiler SQLite database path")
 	flag.Parse()
 
 	cfg, err := buildConfig(kubeconfig)
@@ -80,8 +95,16 @@ func main() {
 		log.Fatalf("[odag-ctrl] failed to create dynamic client: %v", err)
 	}
 
+	// Initialize profiler database.
+	profilerDB, err = initProfilerDB(dbPath)
+	if err != nil {
+		log.Printf("[odag-ctrl] WARNING: profiler DB init failed: %v (profiling disabled)", err)
+	}
+
 	log.Println("[odag-ctrl] starting odag-controller (layer-by-layer, file transport)")
 
+	go watchBandwidthConfigMap(client)
+	go watchODAGTemplates(dynClient)
 	go watchODAGs(dynClient, client)
 	go pollRunningODAGs(dynClient, client)
 	watchPods(client, dynClient)
@@ -199,19 +222,39 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 		return
 	}
 
+	// Build runtime/dataSize/bandwidth resolvers from profiler + template config.
+	var rtRes runtimeResolver
+	var dsRes dataSizeResolver
+	var bwRes bandwidthResolver
+	templateObj := getTemplateForODAG(obj)
+	if templateObj != nil && profilerDB != nil {
+		tplName := obj.GetLabels()["dsf.io/template"]
+		cfg := extractProfilingConfig(templateObj)
+		defaultRT := extractDefaultRuntime(templateObj)
+		defaultDS := extractDefaultDataSize(templateObj)
+		rtRes = buildRuntimeResolver(profilerDB, tplName, tasks, cfg.MinSamples, defaultRT, cfg.RuntimeSource)
+		dsRes = buildDataSizeResolver(profilerDB, tplName, tasks, cfg.MinSamples, defaultDS, cfg.RuntimeSource)
+		bwRes = buildBandwidthResolver(profilerDB, cfg.MinSamples, cfg.BandwidthSource)
+		log.Printf("[odag-ctrl] resolvers for %s: runtime=%s, bandwidth=%s (template: %s)",
+			key, cfg.RuntimeSource, cfg.BandwidthSource, tplName)
+	} else {
+		// Non-template ODAG: use ConfigMap bandwidth only.
+		bwRes = buildBandwidthResolver(nil, 3, "external")
+	}
+
 	schedulerName, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
 	var assignMap map[string]nodeInfo
 	switch schedulerName {
 	case "heft":
 		log.Printf("[odag-ctrl] using HEFT scheduler for %s", key)
-		assignMap = heftAssignTasks(tasks, nodeMap)
+		assignMap = heftAssignTasks(tasks, nodeMap, rtRes, dsRes, bwRes)
 	default:
 		log.Printf("[odag-ctrl] using random scheduler for %s", key)
 		assignMap = assignTasks(tasks, nodeMap)
 	}
 	assignmentCache.Store(key, assignMap)
 
-	predicted := computePredictedSchedule(tasks, assignMap)
+	predicted := computePredictedSchedule(tasks, assignMap, rtRes, dsRes, bwRes)
 	writePredictedSchedule(dynClient, namespace, odagName, predicted)
 
 	log.Printf("[odag-ctrl] task placement for %s:", key)
@@ -370,6 +413,7 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 			resetTaskState(ni.ip, odagName, task.Name)
 		}
 		envVars := buildEnvVars(odagName, task, assignMap, tasks)
+		envVars = addTemplateEnvVars(envVars, odagObj.GetLabels())
 		if err := ensurePod(client, namespace, odagName, task, ni.name, envVars, ownerUID); err != nil {
 			log.Printf("[odag-ctrl] error creating pod for %s/%s: %v", key, task.Name, err)
 		} else {
@@ -565,6 +609,24 @@ func buildEnvVars(odagName string, task taskSpec, assignMap map[string]nodeInfo,
 	}
 
 	env = append(env, task.UserEnv...)
+
+	// Inject template/run metadata if this ODAG was created from a template.
+	// These are set when buildEnvVars is called from processReadyTasks which
+	// has access to the ODAG object via the odagObj parameter.
+	// The actual injection happens in processReadyTasks after buildEnvVars returns.
+
+	return env
+}
+
+// addTemplateEnvVars appends DSF_TEMPLATE_NAME and DSF_RUN_ID env vars if the
+// ODAG was created from a template. Called after buildEnvVars.
+func addTemplateEnvVars(env []corev1.EnvVar, odagLabels map[string]string) []corev1.EnvVar {
+	if tpl := odagLabels["dsf.io/template"]; tpl != "" {
+		env = append(env, corev1.EnvVar{Name: "DSF_TEMPLATE_NAME", Value: tpl})
+	}
+	if run := odagLabels["dsf.io/run"]; run != "" {
+		env = append(env, corev1.EnvVar{Name: "DSF_RUN_ID", Value: run})
+	}
 	return env
 }
 
@@ -732,6 +794,22 @@ func querySending(nodeIP, odagName, taskName string) bool {
 	return strings.TrimSpace(string(body)) == "true"
 }
 
+// queryTaskBytes returns the actual output bytes recorded by the data-agent.
+func queryTaskBytes(nodeIP, odagName, taskName string) int64 {
+	url := fmt.Sprintf("http://%s:%d/bytes/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
+	resp, err := httpClient.Get(url)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
+	return n
+}
+
 // queryTaskState returns the raw state string from the data-agent, or "" on error.
 func queryTaskState(nodeIP, odagName, taskName string) string {
 	url := fmt.Sprintf("http://%s:%d/state/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
@@ -845,7 +923,61 @@ func checkODAGCompletion(dynClient dynamic.Interface, pods []corev1.Pod, namespa
 		makespan := computeMakespan(pods)
 		updateODAGCompletion(dynClient, namespace, odagName, makespan)
 		log.Printf("[odag-ctrl] ODAG %s/%s Succeeded (makespan: %.2fs)", namespace, odagName, makespan)
+
+		// Trigger profiling if this ODAG was created from a template.
+		go profileODAGIfTemplated(dynClient, namespace, odagName, pods, makespan)
 	}
+}
+
+// profileODAGIfTemplated checks if a completed ODAG was created from a template
+// and records profiling data if so.
+func profileODAGIfTemplated(dynClient dynamic.Interface, namespace, odagName string, pods []corev1.Pod, makespan float64) {
+	if profilerDB == nil {
+		return
+	}
+
+	// Fetch the ODAG to check labels.
+	obj, err := dynClient.Resource(odagGVR).Namespace(namespace).Get(
+		context.Background(), odagName, metav1.GetOptions{},
+	)
+	if err != nil {
+		return
+	}
+
+	labels := obj.GetLabels()
+	templateName := labels["dsf.io/template"]
+	if templateName == "" {
+		return
+	}
+
+	runNum := getRunNumber(obj)
+	tasks := extractTasks(obj)
+
+	// Retrieve assignment map.
+	key := namespace + "/" + odagName
+	raw, ok := assignmentCache.Load(key)
+	if !ok {
+		return
+	}
+	assignMap := raw.(map[string]nodeInfo)
+
+	// Extract actual start/completion times from pods.
+	taskStartTimes := make(map[string]time.Time)
+	taskCompletionTimes := make(map[string]time.Time)
+	for _, pod := range pods {
+		taskName := pod.Labels[labelTaskName]
+		if pod.Status.StartTime != nil {
+			taskStartTimes[taskName] = pod.Status.StartTime.Time
+		}
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Terminated != nil {
+				taskCompletionTimes[taskName] = cs.State.Terminated.FinishedAt.Time
+			}
+		}
+	}
+
+	profileCompletedRun(dynClient, profilerDB, namespace, odagName, templateName, runNum,
+		tasks, assignMap, taskStartTimes, taskCompletionTimes, makespan)
 }
 
 func updateODAGPhase(dynClient dynamic.Interface, namespace, name, phase, message string) {
