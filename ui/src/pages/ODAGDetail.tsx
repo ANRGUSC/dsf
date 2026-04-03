@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { api } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
@@ -12,28 +12,6 @@ type Tab = 'graph' | 'tasks' | 'history' | 'schedule'
 export default function ODAGDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
   const [tab, setTab] = useState<Tab>('graph')
-  const [retrying, setRetrying] = useState(false)
-  const [retryError, setRetryError] = useState<string | null>(null)
-  const queryClient = useQueryClient()
-
-  async function handleRetry() {
-    if (!namespace || !name) return
-    setRetrying(true)
-    setRetryError(null)
-    try {
-      await api.retryODAG(namespace, name)
-      // Keep "Retrying..." visible long enough for React to paint it,
-      // then let SSE-driven refetches take over for live graph updates.
-      await new Promise(r => setTimeout(r, 1500))
-      queryClient.invalidateQueries({ queryKey: ['odag', namespace, name] })
-      queryClient.invalidateQueries({ queryKey: ['odag-history', namespace, name] })
-    } catch (e) {
-      setRetryError(String(e))
-    } finally {
-      setRetrying(false)
-    }
-  }
-
   const { data: dag, isLoading, error } = useQuery({
     queryKey: ['odag', namespace, name],
     queryFn: () => api.getODAG(namespace!, name!),
@@ -69,18 +47,6 @@ export default function ODAGDetail() {
 {dag.makespan != null && (
           <span className="text-on-faint text-sm">makespan: {dag.makespan.toFixed(1)}s</span>
         )}
-        <div className="ml-auto flex items-center gap-3">
-          {retryError && (
-            <span className="text-xs text-red-500 dark:text-red-400">{retryError}</span>
-          )}
-          <button
-            onClick={handleRetry}
-            disabled={retrying || dag.phase === 'Running' || dag.phase === 'Scheduling' || dag.phase === 'Pending'}
-            className="text-xs px-3 py-1.5 rounded border border-line text-on-secondary hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {retrying ? 'Retrying...' : 'Retry'}
-          </button>
-        </div>
       </div>
 
       {/* Tabs */}

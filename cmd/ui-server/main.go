@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -392,16 +393,19 @@ func (s *Server) handleRunTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Count existing runs to determine next run number.
+	// Find the highest existing run number to determine the next one.
 	s.mu.RLock()
-	runCount := 0
+	maxRun := 0
 	for _, obj := range s.odags {
-		if obj.GetLabels()["dsf.io/template"] == name && obj.GetNamespace() == ns {
-			runCount++
+		labels := obj.GetLabels()
+		if labels["dsf.io/template"] == name && obj.GetNamespace() == ns {
+			if n, err := strconv.Atoi(labels["dsf.io/run"]); err == nil && n > maxRun {
+				maxRun = n
+			}
 		}
 	}
 	s.mu.RUnlock()
-	runNum := runCount + 1
+	runNum := maxRun + 1
 	odagName := fmt.Sprintf("%s-run-%03d", name, runNum)
 
 	// Extract spec from template, stripping template-only fields.

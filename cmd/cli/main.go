@@ -772,7 +772,7 @@ func odagRunFromTemplate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get template %s: %w", templateName, err)
 	}
 
-	// Determine next run number from existing runs.
+	// Find the highest existing run number to determine the next one.
 	existing, err := dc.Resource(odagGVR).Namespace(namespace).List(
 		context.Background(), metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("dsf.io/template=%s", templateName),
@@ -780,7 +780,18 @@ func odagRunFromTemplate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("list runs: %w", err)
 	}
-	runNum := len(existing.Items) + 1
+	maxRun := 0
+	for _, item := range existing.Items {
+		labels := item.GetLabels()
+		if n, err := fmt.Sscanf(labels["dsf.io/run"], "%d", new(int)); err == nil && n > 0 {
+			v := 0
+			fmt.Sscanf(labels["dsf.io/run"], "%d", &v)
+			if v > maxRun {
+				maxRun = v
+			}
+		}
+	}
+	runNum := maxRun + 1
 
 	odagName := fmt.Sprintf("%s-run-%03d", templateName, runNum)
 
