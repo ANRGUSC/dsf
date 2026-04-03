@@ -82,26 +82,30 @@ task.close()   # no send() — this is a terminal node
 
 **Attributes** (read-only, set at init from injected env vars):
 
-| Attribute | Type | Description |
-|---|---|---|
-| `task.name` | `str` | This task's name. |
-| `task.node` | `str` | Cluster node this pod is running on. |
-| `task.dependencies` | `list[str]` | Names of upstream tasks this task reads from. |
-| `task.successors` | `list[str]` | Names of downstream tasks that read from this task. |
-| `task.is_root` | `bool` | `True` if this task has no dependencies. |
-| `task.is_leaf` | `bool` | `True` if this task has no successors (no need to call `send()`). |
-| `task.expected_runtime` | `float` | Expected wall-clock runtime in seconds from the ODAG spec. |
-| `task.expected_data_size` | `int` | Expected output size in bytes from the ODAG spec. |
+
+| Attribute                 | Type        | Description                                                       |
+| ------------------------- | ----------- | ----------------------------------------------------------------- |
+| `task.name`               | `str`       | This task's name.                                                 |
+| `task.node`               | `str`       | Cluster node this pod is running on.                              |
+| `task.dependencies`       | `list[str]` | Names of upstream tasks this task reads from.                     |
+| `task.successors`         | `list[str]` | Names of downstream tasks that read from this task.               |
+| `task.is_root`            | `bool`      | `True` if this task has no dependencies.                          |
+| `task.is_leaf`            | `bool`      | `True` if this task has no successors (no need to call `send()`). |
+| `task.expected_runtime`   | `float`     | Expected wall-clock runtime in seconds from the ODAG spec.        |
+| `task.expected_data_size` | `int`       | Expected output size in bytes from the ODAG spec.                 |
+
 
 **Methods:**
 
-| Method | Description |
-|---|---|
-| `task.dep_node(dep)` | Returns the node name where dependency `dep` ran. Useful for logging whether a transfer was local or cross-node. |
-| `task.recv(peer)` | Read one upstream dependency's output. `peer` is the dependency task name. Omit if there is exactly one dependency. |
-| `task.recv_all()` | Read all upstream dependencies. Returns `{name: data}`. |
-| `task.send(data)` | Send output to all downstream successors. `data` must be JSON-serializable. |
-| `task.close()` | Signal completion and exit cleanly. Always call at the end. |
+
+| Method               | Description                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `task.dep_node(dep)` | Returns the node name where dependency `dep` ran. Useful for logging whether a transfer was local or cross-node.    |
+| `task.recv(peer)`    | Read one upstream dependency's output. `peer` is the dependency task name. Omit if there is exactly one dependency. |
+| `task.recv_all()`    | Read all upstream dependencies. Returns `{name: data}`.                                                             |
+| `task.send(data)`    | Send output to all downstream successors. `data` must be JSON-serializable.                                         |
+| `task.close()`       | Signal completion and exit cleanly. Always call at the end.                                                         |
+
 
 `send()` is non-blocking — the controller handles routing data to each successor based on node placement. Same-node successors read the file directly; cross-node successors receive it via the data-agent.
 
@@ -178,24 +182,26 @@ spec:
 
 ### Spec fields
 
-| Field | Required | Description |
-|---|---|---|
-| `name` | yes | Unique task name within the ODAG. Used as the peer name in `recv()`. |
-| `image` | yes | Docker image to run. |
-| `command` | yes | Entrypoint command. |
-| `dependencies` | yes | List of task names this task reads from. Empty list for root tasks. |
-| `dataSize` | yes | Expected output size (e.g. `"30MB"`, `"1GiB"`). Used by HEFT scheduler. |
-| `runtime` | yes | Expected wall-clock runtime in seconds. Used by HEFT scheduler. |
-| `resources.cpu` | no | CPU request (Kubernetes format, e.g. `"500m"`). |
-| `resources.memory` | no | Memory request (e.g. `"512Mi"`). |
-| `constraints.nodeNames` | no | Pin task to specific nodes (e.g. `[anrg-1, anrg-3]`). |
-| `args` | no | Additional arguments passed after `command`. |
-| `env` | no | Extra environment variables: `[{name: X, value: Y}]`. |
+
+| Field                   | Required | Description                                                             |
+| ----------------------- | -------- | ----------------------------------------------------------------------- |
+| `name`                  | yes      | Unique task name within the ODAG. Used as the peer name in `recv()`.    |
+| `image`                 | yes      | Docker image to run.                                                    |
+| `command`               | yes      | Entrypoint command.                                                     |
+| `dependencies`          | yes      | List of task names this task reads from. Empty list for root tasks.     |
+| `dataSize`              | yes      | Expected output size (e.g. `"30MB"`, `"1GiB"`). Used by HEFT scheduler. |
+| `runtime`               | yes      | Expected wall-clock runtime in seconds. Used by HEFT scheduler.         |
+| `resources.cpu`         | no       | CPU request (Kubernetes format, e.g. `"500m"`).                         |
+| `resources.memory`      | no       | Memory request (e.g. `"512Mi"`).                                        |
+| `constraints.nodeNames` | no       | Pin task to specific nodes (e.g. `[anrg-1, anrg-3]`).                   |
+| `args`                  | no       | Additional arguments passed after `command`.                            |
+| `env`                   | no       | Extra environment variables: `[{name: X, value: Y}]`.                   |
+
 
 ### Schedulers
 
-- **`heft`** — Heterogeneous Earliest Finish Time. Uses `runtime` and `dataSize` to compute an optimal task-to-node mapping that minimises makespan. Recommended when you have profiled values.
-- **`random`** — Picks a random schedulable node per task. Useful for quick tests.
+- `**heft**` — Heterogeneous Earliest Finish Time. Uses `runtime` and `dataSize` to compute an optimal task-to-node mapping that minimises makespan. Recommended when you have profiled values.
+- `**random**` — Picks a random schedulable node per task. Useful for quick tests.
 
 ### Node constraints
 
@@ -252,7 +258,8 @@ examples/my-dag/
         └── task.py
 ```
 
-**`tasks/source/task.py`**
+`**tasks/source/task.py**`
+
 ```python
 from dsf_sdk import DSFTask
 
@@ -263,7 +270,8 @@ task.send(data)
 task.close()
 ```
 
-**`tasks/transform/task.py`**
+`**tasks/transform/task.py**`
+
 ```python
 from dsf_sdk import DSFTask
 
@@ -276,7 +284,8 @@ task.send({"values": squared, "count": len(squared)})
 task.close()
 ```
 
-**`tasks/sink/task.py`**
+`**tasks/sink/task.py**`
+
 ```python
 from dsf_sdk import DSFTask
 
@@ -289,6 +298,7 @@ task.close()
 ```
 
 **Build and run:**
+
 ```bash
 # Build all images from repo root
 for t in source transform sink; do
@@ -313,3 +323,4 @@ kubectl get pods -l dsf-odag=my-dag -w
 - If you resubmit an ODAG with the same name, the controller clears stale state from the previous run automatically — no manual cleanup needed.
 - Use `print(..., flush=True)` in task code so logs appear immediately in `kubectl logs`.
 - Leaf tasks (no successors) don't need to call `send()`. Just process and `close()`.
+

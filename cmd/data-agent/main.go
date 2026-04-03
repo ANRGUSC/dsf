@@ -41,7 +41,7 @@ import (
 const (
 	pushRetries    = 5
 	pushRetryDelay = 500 * time.Millisecond
-	pushTimeout    = 30 * time.Second
+	pushTimeout    = 120 * time.Second
 	dataAgentPort  = 8081
 )
 

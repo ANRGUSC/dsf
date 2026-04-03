@@ -129,6 +129,15 @@ class DSFTask:
         payload = json.dumps(data).encode()
         self._transport.send(payload)
 
+    def send_raw(self, data: bytes) -> None:
+        """
+        Send raw bytes to all downstream successors.
+
+        Unlike send(), this skips JSON serialization, avoiding a second
+        in-memory copy. Use for large payloads where memory is tight.
+        """
+        self._transport.send(data)
+
     def recv(self, peer: str | None = None) -> Any:
         """
         Receive data from an upstream task.
@@ -158,6 +167,14 @@ class DSFTask:
         """
         raw = self._transport.recv_all()
         return {k: json.loads(v) for k, v in raw.items()}
+
+    def recv_raw(self, peer: str | None = None) -> bytes:
+        """Receive raw bytes from an upstream task (no JSON deserialization)."""
+        return self._transport.recv(peer)
+
+    def recv_all_raw(self) -> dict[str, bytes]:
+        """Receive raw bytes from all upstream dependencies."""
+        return self._transport.recv_all()
 
     def close(self) -> None:
         """Close all open sockets / file handles. Call on shutdown."""

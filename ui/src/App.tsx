@@ -3,6 +3,7 @@ import ODAGList from '@/pages/ODAGList'
 import ODAGDetail from '@/pages/ODAGDetail'
 import CDAGList from '@/pages/CDAGList'
 import CDAGDetail from '@/pages/CDAGDetail'
+import BatchExecution from '@/pages/BatchExecution'
 import { useSSE } from '@/hooks/useSSE'
 
 function AppRoutes() {
@@ -13,6 +14,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<ODAGList />} />
       <Route path="/odags/:namespace/:name" element={<ODAGDetail />} />
+      <Route path="/batch" element={<BatchExecution />} />
       <Route path="/cdags" element={<CDAGList />} />
       <Route path="/cdags/:namespace/:name" element={<CDAGDetail />} />
     </Routes>
@@ -34,6 +36,14 @@ export default function App() {
               }
             >
               ODAGs
+            </NavLink>
+            <NavLink
+              to="/batch"
+              className={({ isActive }) =>
+                isActive ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+              }
+            >
+              Batch
             </NavLink>
             <NavLink
               to="/cdags"

@@ -91,6 +91,12 @@ export interface CDAGDetail extends CDAGSummary {
   }
 }
 
+export interface BatchODAGEntry {
+  name: string
+  delay: number
+  spec: Record<string, unknown>
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
@@ -117,4 +123,14 @@ export const api = {
 
   getCDAG: (namespace: string, name: string): Promise<CDAGDetail> =>
     get(`/api/cdags/${namespace}/${name}`),
+
+  submitBatch: (namespace: string, odags: BatchODAGEntry[]): Promise<{ status: string; count: number }> =>
+    fetch('/api/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ namespace, odags }),
+    }).then(res => {
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+      return res.json()
+    }),
 }

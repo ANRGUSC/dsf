@@ -59,7 +59,8 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo) [
 				var commCost float64
 				if depNode != nodeName {
 					bytes := parseDataSizeBytes(taskByName[dep].DataSize)
-					commCost = float64(bytes) / heftBandwidth
+					bw := linkBandwidth(depNode, nodeName)
+					commCost = float64(bytes) / bw
 				}
 				if ready := depFinish + commCost; ready > est {
 					est = ready

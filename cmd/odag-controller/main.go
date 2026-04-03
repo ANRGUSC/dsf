@@ -50,6 +50,10 @@ type nodeInfo struct {
 // Populated in deployODAG, read in processReadyTasks.
 var assignmentCache sync.Map // "ns/name" -> map[string]nodeInfo
 
+// podCache stores the latest pod state for every ODAG pod, keyed by pod name.
+// Updated by watchPods on every event, read by processReadyTasks.
+var podCache sync.Map // "ns/podName" -> *corev1.Pod
+
 // processedODAGs prevents double-deploying the same ODAG on reconnect.
 var processedODAGs sync.Map // "ns/name" -> bool
 
@@ -84,13 +88,23 @@ func main() {
 }
 
 func buildConfig(kubeconfig string) (*rest.Config, error) {
+	var cfg *rest.Config
+	var err error
 	if kubeconfig != "" {
-		return clientcmd.BuildConfigFromFlags("", kubeconfig)
+		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	} else {
+		cfg, err = rest.InClusterConfig()
+		if err != nil {
+			cfg, err = clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+		}
 	}
-	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		return clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+		return nil, err
 	}
+	// Raise client-side rate limits (defaults: QPS=5, Burst=10) so that
+	// multi-ODAG workloads don't stall on client-side throttling.
+	cfg.QPS = 50
+	cfg.Burst = 100
 	return cfg, nil
 }
 
@@ -116,7 +130,7 @@ func pollRunningODAGs(dynClient dynamic.Interface, client *kubernetes.Clientset)
 			if err != nil {
 				return true
 			}
-			go processReadyTasks(dynClient, client, ns, name, odagObj.GetUID())
+			go processReadyTasks(dynClient, client, ns, name, odagObj)
 			return true
 		})
 	}
@@ -220,7 +234,7 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 	}
 
 	updateODAGPhase(dynClient, namespace, odagName, "Running", "")
-	processReadyTasks(dynClient, client, namespace, odagName, obj.GetUID())
+	processReadyTasks(dynClient, client, namespace, odagName, obj)
 }
 
 // --------------------------------------------------------------------------
@@ -243,6 +257,15 @@ func watchPods(client *kubernetes.Clientset, dynClient dynamic.Interface) {
 			if !ok {
 				continue
 			}
+
+			// Update pod cache on every event (ADDED, MODIFIED, DELETED).
+			podKey := pod.Namespace + "/" + pod.Name
+			if string(event.Type) == "DELETED" {
+				podCache.Delete(podKey)
+				continue
+			}
+			podCache.Store(podKey, pod.DeepCopy())
+
 			if string(event.Type) != "MODIFIED" {
 				continue
 			}
@@ -259,7 +282,7 @@ func watchPods(client *kubernetes.Clientset, dynClient dynamic.Interface) {
 			if err != nil {
 				continue
 			}
-			go processReadyTasks(dynClient, client, ns, odagName, odagObj.GetUID())
+			go processReadyTasks(dynClient, client, ns, odagName, odagObj)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -276,9 +299,10 @@ func watchPods(client *kubernetes.Clientset, dynClient dynamic.Interface) {
 // --------------------------------------------------------------------------
 
 func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset,
-	namespace, odagName string, ownerUID types.UID) {
+	namespace, odagName string, odagObj *unstructured.Unstructured) {
 
 	key := namespace + "/" + odagName
+	ownerUID := odagObj.GetUID()
 
 	// Retrieve cached assignment.
 	raw, ok := assignmentCache.Load(key)
@@ -287,27 +311,23 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 	}
 	assignMap := raw.(map[string]nodeInfo)
 
-	// Fetch ODAG CR to get spec.tasks.
-	odagObj, err := dynClient.Resource(odagGVR).Namespace(namespace).Get(
-		context.Background(), odagName, metav1.GetOptions{},
-	)
-	if err != nil {
-		return
-	}
+	// Extract tasks from the passed ODAG object (no extra API call needed).
 	tasks := extractTasks(odagObj)
 
-	// List all pods that belong to this ODAG.
-	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("%s=%s", labelODAGName, odagName),
+	// Collect pods for this ODAG from the in-memory cache (no API call).
+	var podItems []corev1.Pod
+	podCache.Range(func(_, val interface{}) bool {
+		p := val.(*corev1.Pod)
+		if p.Namespace == namespace && p.Labels[labelODAGName] == odagName {
+			podItems = append(podItems, *p)
+		}
+		return true
 	})
-	if err != nil {
-		return
-	}
 
 	// Build a map of which tasks already have pods, and their current pod phase.
 	existingPods := make(map[string]bool)
 	podPhases := make(map[string]corev1.PodPhase)
-	for _, pod := range pods.Items {
+	for _, pod := range podItems {
 		taskName := pod.Labels[labelTaskName]
 		existingPods[taskName] = true
 		podPhases[taskName] = pod.Status.Phase
@@ -358,8 +378,8 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 	}
 
 	// Update per-task statuses and check overall completion.
-	updateTaskStatuses(dynClient, namespace, odagName, pods.Items, assignMap, tasks)
-	checkODAGCompletion(dynClient, pods.Items, namespace, odagName, len(tasks))
+	updateTaskStatuses(dynClient, namespace, odagName, podItems, assignMap, tasks)
+	checkODAGCompletion(dynClient, podItems, namespace, odagName, len(tasks))
 }
 
 // --------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,7 @@ func main() {
 	mux.HandleFunc("POST /api/odags/{namespace}/{name}/retry", srv.handleRetryODAG)
 	mux.HandleFunc("GET /api/cdags", srv.handleListCDAGs)
 	mux.HandleFunc("GET /api/cdags/{namespace}/{name}", srv.handleGetCDAG)
+	mux.HandleFunc("POST /api/batch", srv.handleBatchSubmit)
 	mux.HandleFunc("GET /api/events", srv.handleSSE)
 
 	// Serve compiled React frontend from ui/dist (embedded at build time).
@@ -197,6 +199,9 @@ func (s *Server) handleListODAGs(w http.ResponseWriter, r *http.Request) {
 	for _, obj := range s.odags {
 		result = append(result, odagSummary(obj))
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return fmt.Sprint(result[i]["name"]) < fmt.Sprint(result[j]["name"])
+	})
 	writeJSON(w, result)
 }
 
@@ -281,6 +286,9 @@ func (s *Server) handleListCDAGs(w http.ResponseWriter, r *http.Request) {
 	for _, obj := range s.cdags {
 		result = append(result, cdagSummary(obj))
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return fmt.Sprint(result[i]["name"]) < fmt.Sprint(result[j]["name"])
+	})
 	writeJSON(w, result)
 }
 
@@ -295,6 +303,65 @@ func (s *Server) handleGetCDAG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, cdagDetail(obj))
+}
+
+// handleBatchSubmit creates multiple ODAGs with staggered delays.
+func (s *Server) handleBatchSubmit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Namespace string `json:"namespace"`
+		ODAGs     []struct {
+			Name  string                 `json:"name"`
+			Delay int                    `json:"delay"`
+			Spec  map[string]interface{} `json:"spec"`
+		} `json:"odags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ns := req.Namespace
+	if ns == "" {
+		ns = "dsf-system"
+	}
+
+	bgCtx := context.Background()
+
+	// Delete existing ODAGs with these names.
+	for _, o := range req.ODAGs {
+		_ = s.dynClient.Resource(odagGVR).Namespace(ns).Delete(bgCtx, o.Name, metav1.DeleteOptions{})
+	}
+
+	// Respond immediately.
+	writeJSON(w, map[string]interface{}{"status": "started", "count": len(req.ODAGs)})
+
+	// Submit with staggered delays in background.
+	go func() {
+		// Wait for deletions to propagate.
+		time.Sleep(3 * time.Second)
+
+		for _, o := range req.ODAGs {
+			if o.Delay > 0 {
+				time.Sleep(time.Duration(o.Delay) * time.Second)
+			}
+			cr := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "dsf.io/v1",
+					"kind":       "ODAG",
+					"metadata": map[string]interface{}{
+						"name":      o.Name,
+						"namespace": ns,
+					},
+					"spec": o.Spec,
+				},
+			}
+			if _, err := s.dynClient.Resource(odagGVR).Namespace(ns).Create(bgCtx, cr, metav1.CreateOptions{}); err != nil {
+				log.Printf("[ui-server] batch create failed for %s: %v", o.Name, err)
+			} else {
+				log.Printf("[ui-server] batch submitted %s (delay=%ds)", o.Name, o.Delay)
+			}
+		}
+		log.Printf("[ui-server] batch submission complete (%d ODAGs)", len(req.ODAGs))
+	}()
 }
 
 // handleSSE streams live resource change events to the frontend.
@@ -536,7 +603,7 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
