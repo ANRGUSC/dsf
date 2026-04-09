@@ -4,7 +4,7 @@ metadata:
   name: iobt-eval-random
   namespace: dsf-system
 spec:
-  description: "IoBT eval (random scheduler): 4 sensors → preprocess → infer → fuse → report"
+  description: "IoBT eval (random scheduler): data-heavy transfers to stress network"
   scheduler: random
   profiling:
     enabled: true
@@ -12,18 +12,18 @@ spec:
     minSamples: 2
     emaAlpha: 0.3
   defaults:
-    runtime: 5
-    dataSize: "20MB"
+    runtime: 3
+    dataSize: "50MB"
   retention:
     maxRuns: 20
   tasks:
-    # Layer 0 — Capture (pinned to specific nodes)
+    # Layer 0 — Capture (pinned, generates large raw data)
     - name: capture-1
       image: 192.168.1.163:5000/dsf-iobt-capture:latest
       command: ["python", "task.py"]
       dependencies: []
-      dataSize: "100MB"
-      runtime: 3
+      dataSize: "150MB"
+      runtime: 2
       resources:
         cpu: "200m"
         memory: "512Mi"
@@ -34,8 +34,8 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-capture:latest
       command: ["python", "task.py"]
       dependencies: []
-      dataSize: "120MB"
-      runtime: 3
+      dataSize: "150MB"
+      runtime: 2
       resources:
         cpu: "200m"
         memory: "512Mi"
@@ -46,8 +46,8 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-capture:latest
       command: ["python", "task.py"]
       dependencies: []
-      dataSize: "80MB"
-      runtime: 3
+      dataSize: "120MB"
+      runtime: 2
       resources:
         cpu: "200m"
         memory: "512Mi"
@@ -58,21 +58,21 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-capture:latest
       command: ["python", "task.py"]
       dependencies: []
-      dataSize: "150MB"
-      runtime: 3
+      dataSize: "200MB"
+      runtime: 2
       resources:
         cpu: "200m"
         memory: "512Mi"
       constraints:
         nodeNames: [anrg-6]
 
-    # Layer 1 — Preprocess (co-located with capture)
+    # Layer 1 — Preprocess (co-located, produces LARGE output for cross-node transfer)
     - name: preprocess-1
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-1"]
-      dataSize: "20MB"
-      runtime: 4
+      dataSize: "100MB"
+      runtime: 2
       resources:
         cpu: "300m"
         memory: "512Mi"
@@ -83,8 +83,8 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-2"]
-      dataSize: "25MB"
-      runtime: 4
+      dataSize: "100MB"
+      runtime: 2
       resources:
         cpu: "300m"
         memory: "512Mi"
@@ -95,8 +95,8 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-3"]
-      dataSize: "15MB"
-      runtime: 4
+      dataSize: "80MB"
+      runtime: 2
       resources:
         cpu: "300m"
         memory: "512Mi"
@@ -107,21 +107,21 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-4"]
-      dataSize: "30MB"
-      runtime: 4
+      dataSize: "150MB"
+      runtime: 2
       resources:
         cpu: "300m"
         memory: "512Mi"
       constraints:
         nodeNames: [anrg-6]
 
-    # Layer 2 — Inference (scheduler has real choice here)
+    # Layer 2 — Inference (SHORT compute, so transfer time dominates)
     - name: infer-1
       image: 192.168.1.163:5000/dsf-iobt-infer:latest
       command: ["python", "task.py"]
       dependencies: ["preprocess-1"]
       dataSize: "1MB"
-      runtime: 10
+      runtime: 3
       resources:
         cpu: "500m"
         memory: "512Mi"
@@ -133,7 +133,7 @@ spec:
       command: ["python", "task.py"]
       dependencies: ["preprocess-2"]
       dataSize: "1MB"
-      runtime: 10
+      runtime: 3
       resources:
         cpu: "500m"
         memory: "512Mi"
@@ -145,7 +145,7 @@ spec:
       command: ["python", "task.py"]
       dependencies: ["preprocess-3"]
       dataSize: "1MB"
-      runtime: 10
+      runtime: 3
       resources:
         cpu: "500m"
         memory: "512Mi"
@@ -157,20 +157,20 @@ spec:
       command: ["python", "task.py"]
       dependencies: ["preprocess-4"]
       dataSize: "1MB"
-      runtime: 10
+      runtime: 3
       resources:
         cpu: "500m"
         memory: "512Mi"
       constraints:
         nodeNames: [anrg-3, anrg-4, anrg-5, anrg-6]
 
-    # Layer 3 — Fusion (fan-in)
+    # Layer 3 — Fusion
     - name: fuse-tracks
       image: 192.168.1.163:5000/dsf-iobt-fuse:latest
       command: ["python", "task.py"]
       dependencies: ["infer-1", "infer-2", "infer-3", "infer-4"]
       dataSize: "1MB"
-      runtime: 3
+      runtime: 2
       resources:
         cpu: "300m"
         memory: "256Mi"
@@ -183,7 +183,7 @@ spec:
       command: ["python", "task.py"]
       dependencies: ["fuse-tracks"]
       dataSize: "0"
-      runtime: 2
+      runtime: 1
       resources:
         cpu: "200m"
         memory: "128Mi"

@@ -34,7 +34,7 @@ plt.rcParams.update({
 
 def plot_odag():
     """Plot ODAG makespan comparison (bar chart + convergence)."""
-    csv_path = os.path.join(RESULTS_DIR, "odag-experiment1.csv")
+    csv_path = os.path.join(RESULTS_DIR, "odag-makespan.csv")
     if not os.path.exists(csv_path):
         print(f"  Skipping ODAG plots: {csv_path} not found")
         return

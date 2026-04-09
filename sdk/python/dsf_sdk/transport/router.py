@@ -16,6 +16,15 @@ def build_transport():
         from dsf_sdk.transport.file import FileTransport
         return FileTransport()
 
+    if pattern == "mqtt":
+        from dsf_sdk.transport.mqtt import MqttTransport
+        peers: dict[str, str] = {}
+        return MqttTransport(peers)
+
+    if pattern == "shared_volume":
+        from dsf_sdk.transport.shared_volume import SharedVolumeTransport
+        return SharedVolumeTransport()
+
     # ZMQ transports (CDAG pubsub, or legacy pushpull)
     from dsf_sdk.transport.zeromq import ZmqPushPullTransport, ZmqPubSubTransport
 
