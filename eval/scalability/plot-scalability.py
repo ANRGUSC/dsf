@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Plot Experiment 2: Scalability — P2P (ZMQ) vs Centralized (MQTT).
+Plot Experiment 2: Scalability — P2P vs Centralized.
 
 Generates:
-1. Throughput vs fan-out width (line chart, ZMQ vs MQTT)
-2. Latency vs fan-out width (line chart, ZMQ vs MQTT)
+  2A (ODAG): Makespan vs fan-out width (P2P data-agent vs NFS)
+  2B (CDAG): Throughput + latency vs fan-out width (ZMQ P2P vs MQTT broker)
 
 Usage: python3 eval/scalability/plot-scalability.py
 """
@@ -34,121 +34,219 @@ plt.rcParams.update({
     "grid.alpha": 0.3,
 })
 
+COLORS = {"p2p": "#3b82f6", "nfs": "#ef4444", "zmq": "#3b82f6", "mqtt": "#ef4444"}
+MARKERS = {"p2p": "o", "nfs": "s", "zmq": "o", "mqtt": "s"}
+LABELS = {
+    "p2p": "DSF (P2P data-agent)",
+    "nfs": "NFS shared storage",
+    "zmq": "DSF (ZMQ P2P)",
+    "mqtt": "MQTT Broker",
+}
 
-def load_data():
-    csv_path = os.path.join(RESULTS_DIR, "scalability.csv")
+
+def plot_odag():
+    """Plot ODAG makespan vs fan-out width."""
+    csv_path = os.path.join(RESULTS_DIR, "odag-scalability.csv")
     if not os.path.exists(csv_path):
-        print(f"  CSV not found: {csv_path}")
-        return None
+        print(f"  Skipping ODAG plot: {csv_path} not found")
+        return
 
-    # Group by (transport, workers) → lists of metrics.
-    data = defaultdict(lambda: {"throughput": [], "avg_latency": [], "p50": [], "p95": [], "p99": []})
+    data = defaultdict(lambda: defaultdict(list))
     with open(csv_path) as f:
         reader = csv.DictReader(f)
         for row in reader:
-            key = (row["transport"], int(row["workers"]))
-            if float(row["throughput"]) > 0:
-                data[key]["throughput"].append(float(row["throughput"]))
-                data[key]["avg_latency"].append(float(row["avg_latency"]))
-                data[key]["p50"].append(float(row["p50_latency"]))
-                data[key]["p95"].append(float(row["p95_latency"]))
-                data[key]["p99"].append(float(row["p99_latency"]))
-    return data
+            makespan = float(row["makespan"])
+            if makespan > 0:
+                data[row["transport"]][int(row["workers"])].append(makespan)
 
+    if not data:
+        print("  Skipping ODAG plot: no data")
+        return
 
-def plot_throughput(data):
-    """Throughput vs fan-out width."""
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(6, 4.5))
 
-    for transport, color, marker, label in [
-        ("zmq", "#3b82f6", "o", "DSF (ZMQ P2P)"),
-        ("mqtt", "#ef4444", "s", "MQTT Broker"),
-    ]:
-        workers = sorted(set(w for t, w in data.keys() if t == transport))
-        means = [np.mean(data[(transport, w)]["throughput"]) for w in workers]
-        stds = [np.std(data[(transport, w)]["throughput"]) for w in workers]
+    for transport in ["p2p", "nfs"]:
+        if transport not in data:
+            continue
+        workers = sorted(data[transport].keys())
+        means = [np.mean(data[transport][w]) for w in workers]
+        stds = [np.std(data[transport][w]) for w in workers]
 
-        ax.errorbar(workers, means, yerr=stds, marker=marker, color=color,
-                     linewidth=2, markersize=8, capsize=5, label=label)
+        ax.errorbar(workers, means, yerr=stds,
+                     marker=MARKERS[transport], color=COLORS[transport],
+                     linewidth=2, markersize=8, capsize=5,
+                     label=LABELS[transport])
 
     ax.set_xlabel("Number of Workers (fan-out width)")
-    ax.set_ylabel("Throughput at Sink (msg/s)")
-    ax.set_title("Scalability: Throughput vs Fan-Out Width")
+    ax.set_ylabel("Makespan (seconds)")
+    ax.set_title("ODAG Scalability: P2P vs NFS")
     ax.legend()
-    ax.set_xticks(sorted(set(w for _, w in data.keys())))
+    ax.set_xticks(sorted(set(w for t in data for w in data[t])))
 
     plt.tight_layout()
-    out = os.path.join(FIGURES_DIR, "scalability-throughput.png")
+    out = os.path.join(FIGURES_DIR, "odag-scalability.png")
     plt.savefig(out, dpi=200)
     print(f"  Saved: {out}")
     plt.close()
 
 
-def plot_latency(data):
-    """Latency (p50, p95) vs fan-out width."""
-    fig, ax = plt.subplots(figsize=(6, 4))
+def plot_cdag():
+    """Plot CDAG throughput and latency vs fan-out width."""
+    csv_path = os.path.join(RESULTS_DIR, "cdag-scalability.csv")
+    if not os.path.exists(csv_path):
+        # Try old name.
+        csv_path = os.path.join(RESULTS_DIR, "scalability.csv")
+        if not os.path.exists(csv_path):
+            print(f"  Skipping CDAG plots: no CSV found")
+            return
 
-    for transport, color, marker, label in [
-        ("zmq", "#3b82f6", "o", "DSF (ZMQ P2P)"),
-        ("mqtt", "#ef4444", "s", "MQTT Broker"),
-    ]:
-        workers = sorted(set(w for t, w in data.keys() if t == transport))
+    data = defaultdict(lambda: defaultdict(lambda: {"throughput": [], "avg_latency": [], "p50": [], "p95": []}))
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            tp = float(row["throughput"])
+            if tp > 0:
+                t, w = row["transport"], int(row["workers"])
+                data[t][w]["throughput"].append(tp)
+                data[t][w]["avg_latency"].append(float(row["avg_latency"]))
+                data[t][w]["p50"].append(float(row["p50_latency"]))
+                data[t][w]["p95"].append(float(row["p95_latency"]))
 
-        p50_means = [np.mean(data[(transport, w)]["p50"]) * 1000 for w in workers]
-        p95_means = [np.mean(data[(transport, w)]["p95"]) * 1000 for w in workers]
+    if not data:
+        print("  Skipping CDAG plots: no data")
+        return
 
-        ax.plot(workers, p50_means, marker=marker, color=color, linewidth=2,
-                markersize=8, label=f"{label} (p50)", linestyle="-")
-        ax.plot(workers, p95_means, marker=marker, color=color, linewidth=1.5,
-                markersize=6, label=f"{label} (p95)", linestyle="--", alpha=0.7)
-
-    ax.set_xlabel("Number of Workers (fan-out width)")
-    ax.set_ylabel("End-to-End Latency (ms)")
-    ax.set_title("Scalability: Latency vs Fan-Out Width")
-    ax.legend(fontsize=9)
-    ax.set_xticks(sorted(set(w for _, w in data.keys())))
-
-    plt.tight_layout()
-    out = os.path.join(FIGURES_DIR, "scalability-latency.png")
-    plt.savefig(out, dpi=200)
-    print(f"  Saved: {out}")
-    plt.close()
-
-
-def plot_combined(data):
-    """Side-by-side throughput + latency."""
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 
-    for transport, color, marker, label in [
-        ("zmq", "#3b82f6", "o", "DSF (ZMQ P2P)"),
-        ("mqtt", "#ef4444", "s", "MQTT Broker"),
-    ]:
-        workers = sorted(set(w for t, w in data.keys() if t == transport))
+    for transport in ["zmq", "mqtt"]:
+        if transport not in data:
+            continue
+        workers = sorted(data[transport].keys())
 
-        # Throughput
-        tp_means = [np.mean(data[(transport, w)]["throughput"]) for w in workers]
-        tp_stds = [np.std(data[(transport, w)]["throughput"]) for w in workers]
-        axes[0].errorbar(workers, tp_means, yerr=tp_stds, marker=marker, color=color,
-                          linewidth=2, markersize=8, capsize=5, label=label)
+        # Throughput.
+        tp_means = [np.mean(data[transport][w]["throughput"]) for w in workers]
+        tp_stds = [np.std(data[transport][w]["throughput"]) for w in workers]
+        axes[0].errorbar(workers, tp_means, yerr=tp_stds,
+                          marker=MARKERS[transport], color=COLORS[transport],
+                          linewidth=2, markersize=8, capsize=5,
+                          label=LABELS[transport])
 
-        # Latency (p50)
-        lat_means = [np.mean(data[(transport, w)]["p50"]) * 1000 for w in workers]
-        lat_stds = [np.std(data[(transport, w)]["p50"]) * 1000 for w in workers]
-        axes[1].errorbar(workers, lat_means, yerr=lat_stds, marker=marker, color=color,
-                          linewidth=2, markersize=8, capsize=5, label=label)
+        # Latency p50.
+        lat_means = [np.mean(data[transport][w]["p50"]) * 1000 for w in workers]
+        lat_stds = [np.std(data[transport][w]["p50"]) * 1000 for w in workers]
+        axes[1].errorbar(workers, lat_means, yerr=lat_stds,
+                          marker=MARKERS[transport], color=COLORS[transport],
+                          linewidth=2, markersize=8, capsize=5,
+                          label=LABELS[transport])
 
-    xticks = sorted(set(w for _, w in data.keys()))
+    xticks = sorted(set(w for t in data for w in data[t]))
     axes[0].set_xlabel("Workers")
     axes[0].set_ylabel("Throughput (msg/s)")
-    axes[0].set_title("(a) Throughput")
+    axes[0].set_title("(a) CDAG Throughput")
     axes[0].legend()
     axes[0].set_xticks(xticks)
 
     axes[1].set_xlabel("Workers")
     axes[1].set_ylabel("Latency p50 (ms)")
-    axes[1].set_title("(b) Latency")
+    axes[1].set_title("(b) CDAG Latency")
     axes[1].legend()
     axes[1].set_xticks(xticks)
+
+    plt.tight_layout()
+    out = os.path.join(FIGURES_DIR, "cdag-scalability.png")
+    plt.savefig(out, dpi=200)
+    print(f"  Saved: {out}")
+    plt.close()
+
+
+def plot_combined():
+    """3-panel combined figure for the paper."""
+    odag_path = os.path.join(RESULTS_DIR, "odag-scalability.csv")
+    cdag_path = os.path.join(RESULTS_DIR, "cdag-scalability.csv")
+    if not os.path.exists(cdag_path):
+        cdag_path = os.path.join(RESULTS_DIR, "scalability.csv")
+
+    has_odag = os.path.exists(odag_path)
+    has_cdag = os.path.exists(cdag_path)
+
+    if not has_odag and not has_cdag:
+        print("  Skipping combined plot: no data")
+        return
+
+    n_panels = (1 if has_odag else 0) + (2 if has_cdag else 0)
+    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4.5))
+    if n_panels == 1:
+        axes = [axes]
+
+    idx = 0
+
+    # ODAG panel.
+    if has_odag:
+        odag_data = defaultdict(lambda: defaultdict(list))
+        with open(odag_path) as f:
+            for row in csv.DictReader(f):
+                if float(row["makespan"]) > 0:
+                    odag_data[row["transport"]][int(row["workers"])].append(float(row["makespan"]))
+
+        ax = axes[idx]
+        for transport in ["p2p", "nfs"]:
+            if transport not in odag_data:
+                continue
+            workers = sorted(odag_data[transport].keys())
+            means = [np.mean(odag_data[transport][w]) for w in workers]
+            stds = [np.std(odag_data[transport][w]) for w in workers]
+            ax.errorbar(workers, means, yerr=stds,
+                         marker=MARKERS[transport], color=COLORS[transport],
+                         linewidth=2, markersize=8, capsize=5,
+                         label=LABELS[transport])
+        ax.set_xlabel("Workers")
+        ax.set_ylabel("Makespan (s)")
+        ax.set_title("(a) ODAG: Makespan")
+        ax.legend(fontsize=9)
+        ax.set_xticks(sorted(set(w for t in odag_data for w in odag_data[t])))
+        idx += 1
+
+    # CDAG panels.
+    if has_cdag:
+        cdag_data = defaultdict(lambda: defaultdict(lambda: {"throughput": [], "p50": []}))
+        with open(cdag_path) as f:
+            for row in csv.DictReader(f):
+                if float(row["throughput"]) > 0:
+                    t, w = row["transport"], int(row["workers"])
+                    cdag_data[t][w]["throughput"].append(float(row["throughput"]))
+                    cdag_data[t][w]["p50"].append(float(row["p50_latency"]))
+
+        for transport in ["zmq", "mqtt"]:
+            if transport not in cdag_data:
+                continue
+            workers = sorted(cdag_data[transport].keys())
+
+            tp_means = [np.mean(cdag_data[transport][w]["throughput"]) for w in workers]
+            tp_stds = [np.std(cdag_data[transport][w]["throughput"]) for w in workers]
+            axes[idx].errorbar(workers, tp_means, yerr=tp_stds,
+                                marker=MARKERS[transport], color=COLORS[transport],
+                                linewidth=2, markersize=8, capsize=5,
+                                label=LABELS[transport])
+
+            lat_means = [np.mean(cdag_data[transport][w]["p50"]) * 1000 for w in workers]
+            lat_stds = [np.std(cdag_data[transport][w]["p50"]) * 1000 for w in workers]
+            axes[idx + 1].errorbar(workers, lat_means, yerr=lat_stds,
+                                    marker=MARKERS[transport], color=COLORS[transport],
+                                    linewidth=2, markersize=8, capsize=5,
+                                    label=LABELS[transport])
+
+        xticks = sorted(set(w for t in cdag_data for w in cdag_data[t]))
+        axes[idx].set_xlabel("Workers")
+        axes[idx].set_ylabel("Throughput (msg/s)")
+        axes[idx].set_title("(b) CDAG: Throughput")
+        axes[idx].legend(fontsize=9)
+        axes[idx].set_xticks(xticks)
+
+        axes[idx + 1].set_xlabel("Workers")
+        axes[idx + 1].set_ylabel("Latency p50 (ms)")
+        axes[idx + 1].set_title("(c) CDAG: Latency")
+        axes[idx + 1].legend(fontsize=9)
+        axes[idx + 1].set_xticks(xticks)
 
     plt.tight_layout()
     out = os.path.join(FIGURES_DIR, "scalability-combined.png")
@@ -159,9 +257,10 @@ def plot_combined(data):
 
 if __name__ == "__main__":
     print("=== Experiment 2: Scalability Plots ===")
-    data = load_data()
-    if data:
-        plot_throughput(data)
-        plot_latency(data)
-        plot_combined(data)
+    print("ODAG (P2P vs NFS):")
+    plot_odag()
+    print("CDAG (ZMQ vs MQTT):")
+    plot_cdag()
+    print("Combined:")
+    plot_combined()
     print("Done.")

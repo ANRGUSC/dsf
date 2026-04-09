@@ -5,4 +5,5 @@ WORKDIR /app
 RUN pip install --no-cache-dir pyzmq paho-mqtt
 COPY sdk/python/dsf_sdk ./dsf_sdk
 COPY eval/scalability/task.py .
+COPY eval/scalability/odag-task.py .
 CMD ["python", "task.py"]

@@ -684,15 +684,26 @@ func ensurePod(client *kubernetes.Clientset, namespace, odagName string, task ta
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
-			Volumes: []corev1.Volume{{
-				Name: "dsf-outputs",
-				VolumeSource: corev1.VolumeSource{
-					HostPath: &corev1.HostPathVolumeSource{
-						Path: dataOutputPath,
-						Type: &hostPathType,
+			Volumes: []corev1.Volume{
+				{
+					Name: "dsf-outputs",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: dataOutputPath,
+							Type: &hostPathType,
+						},
 					},
 				},
-			}},
+				{
+					Name: "dsf-shared",
+					VolumeSource: corev1.VolumeSource{
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: "/shared/dsf-outputs",
+							Type: &hostPathType,
+						},
+					},
+				},
+			},
 			Containers: []corev1.Container{{
 				Name:            task.Name,
 				Image:           task.Image,
@@ -701,10 +712,16 @@ func ensurePod(client *kubernetes.Clientset, namespace, odagName string, task ta
 				Args:            task.Args,
 				Env:             envVars,
 				Resources:       resources,
-				VolumeMounts: []corev1.VolumeMount{{
-					Name:      "dsf-outputs",
-					MountPath: dataOutputPath,
-				}},
+				VolumeMounts: []corev1.VolumeMount{
+					{
+						Name:      "dsf-outputs",
+						MountPath: dataOutputPath,
+					},
+					{
+						Name:      "dsf-shared",
+						MountPath: "/shared/dsf-outputs",
+					},
+				},
 			}},
 		},
 	}
