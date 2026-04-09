@@ -49,6 +49,12 @@ spec:
                         type: integer
                         default: 1
                         minimum: 1
+                      dataRate:
+                        type: string
+                        description: >
+                          Expected output data rate for this task (e.g. "1MB/s", "500KB/s").
+                          Used by the locality scheduler to minimize cross-node communication cost.
+                          Optional — tasks without a dataRate are assumed to have negligible output.
                       dependencies:
                         type: array
                         items:

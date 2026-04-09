@@ -60,6 +60,7 @@ func main() {
 
 	log.Println("[cdag-ctrl] starting cdag-controller")
 
+	go watchBandwidthConfigMap(client)
 	go watchCDAGTemplates(dynClient)
 	go watchCDAGs(dynClient, client)
 	go runReconcileLoop(dynClient, client)
@@ -149,8 +150,17 @@ func deployCDAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 		return
 	}
 
-	// Assign tasks: pick a random node from the constraint list (or any node).
-	assignMap := assignTasks(tasks, nodes)
+	// Assign tasks using the configured scheduler.
+	schedulerName, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
+	var assignMap map[string]string
+	switch schedulerName {
+	case "locality":
+		log.Printf("[cdag-ctrl] using locality scheduler for %s", key)
+		assignMap = localityAssignTasks(tasks, nodes)
+	default:
+		log.Printf("[cdag-ctrl] using random scheduler for %s", key)
+		assignMap = assignTasks(tasks, nodes)
+	}
 	log.Printf("[cdag-ctrl] task placement for %s:", key)
 	for task, node := range assignMap {
 		log.Printf("[cdag-ctrl]   %-20s -> %s", task, node)
@@ -370,6 +380,7 @@ type cdagTaskSpec struct {
 	Replicas     int
 	CPU          string
 	Memory       string
+	DataRate     string // e.g. "1MB/s" — used by locality scheduler
 	Constraints  []string
 	UserEnv      []corev1.EnvVar
 }
@@ -397,6 +408,7 @@ func extractTasks(obj *unstructured.Unstructured) []cdagTaskSpec {
 		constraints, _, _ := unstructured.NestedStringSlice(t, "constraints", "nodeNames")
 		cpu, _, _ := unstructured.NestedString(t, "resources", "cpu")
 		mem, _, _ := unstructured.NestedString(t, "resources", "memory")
+		dataRate, _, _ := unstructured.NestedString(t, "dataRate")
 
 		var userEnv []corev1.EnvVar
 		if envList, ok := t["env"].([]interface{}); ok {
@@ -413,7 +425,8 @@ func extractTasks(obj *unstructured.Unstructured) []cdagTaskSpec {
 		tasks = append(tasks, cdagTaskSpec{
 			Name: name, Image: image, Command: cmd, Args: args,
 			Dependencies: deps, Replicas: replicas,
-			Constraints: constraints, CPU: cpu, Memory: mem, UserEnv: userEnv,
+			Constraints: constraints, CPU: cpu, Memory: mem,
+			DataRate: dataRate, UserEnv: userEnv,
 		})
 	}
 	return tasks
