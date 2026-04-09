@@ -19,6 +19,10 @@ spec:
     dataSize: "20MB"
   retention:
     maxRuns: 20
+    data:
+      policy: keepLatest
+      keepRuns: 5
+      maxSizePerNode: "2Gi"
   tasks:
     - name: preprocess
       image: 192.168.1.163:5000/multi-odag-task:latest

@@ -17,6 +17,9 @@ spec:
     dataSize: "1MB"
   retention:
     maxRuns: 10
+    data:
+      policy: keepLatest
+      keepRuns: 3
   tasks:
     - name: generate
       image: 192.168.1.163:5000/dag-pipeline-generate:latest

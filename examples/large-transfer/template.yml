@@ -17,6 +17,10 @@ spec:
     dataSize: "50MB"
   retention:
     maxRuns: 10
+    data:
+      policy: keepLatest
+      keepRuns: 2
+      maxSizePerNode: "5Gi"
   tasks:
     # Stage 1: produce on anrg-3 (fast link to anrg-5, slow to anrg-6)
     - name: produce

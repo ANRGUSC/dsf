@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 )
 
 // CRD reference for dsf.io/v1/ODAGTemplate
@@ -216,6 +218,61 @@ func extractDefaultDataSize(templateObj *unstructured.Unstructured) string {
 	return v
 }
 
+// --------------------------------------------------------------------------
+// Data retention config extraction
+// --------------------------------------------------------------------------
+
+// dataRetentionConfig holds the on-disk data retention policy from an ODAGTemplate.
+type dataRetentionConfig struct {
+	Policy         string        // "immediate" | "delayed" | "keepLatest" | "none"
+	KeepRuns       int           // number of recent completed runs to keep data for
+	MaxSizePerNode int64         // bytes; 0 = no limit
+	DeleteDelay    time.Duration // only for "delayed" policy
+}
+
+// defaultDataRetentionConfig returns the default data retention configuration.
+func defaultDataRetentionConfig() dataRetentionConfig {
+	return dataRetentionConfig{
+		Policy:         "keepLatest",
+		KeepRuns:       3,
+		MaxSizePerNode: 0,
+		DeleteDelay:    0,
+	}
+}
+
+// extractDataRetentionConfig reads spec.retention.data from a template.
+func extractDataRetentionConfig(templateObj *unstructured.Unstructured) dataRetentionConfig {
+	cfg := defaultDataRetentionConfig()
+	if templateObj == nil {
+		return cfg
+	}
+
+	data, ok, _ := unstructured.NestedMap(templateObj.Object, "spec", "retention", "data")
+	if !ok {
+		return cfg
+	}
+
+	if v, ok := data["policy"].(string); ok {
+		switch v {
+		case "immediate", "delayed", "keepLatest", "none":
+			cfg.Policy = v
+		}
+	}
+	if v, ok, _ := unstructured.NestedInt64(data, "keepRuns"); ok {
+		cfg.KeepRuns = int(v)
+	}
+	if v, ok := data["maxSizePerNode"].(string); ok && v != "0" {
+		cfg.MaxSizePerNode = parseDataSizeBytes(v)
+	}
+	if v, ok := data["deleteDelay"].(string); ok && v != "0s" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.DeleteDelay = d
+		}
+	}
+
+	return cfg
+}
+
 // extractRetentionMaxRuns reads spec.retention.maxRuns from a template.
 func extractRetentionMaxRuns(templateObj *unstructured.Unstructured) int {
 	if templateObj == nil {
@@ -234,7 +291,7 @@ func extractRetentionMaxRuns(templateObj *unstructured.Unstructured) int {
 
 // profileCompletedRun records profiler observations from a completed ODAG run.
 // Called from checkODAGCompletion when the ODAG has the dsf.io/template label.
-func profileCompletedRun(dynClient dynamic.Interface, db *sql.DB,
+func profileCompletedRun(dynClient dynamic.Interface, client *kubernetes.Clientset, db *sql.DB,
 	namespace, odagName, templateName string, runNum int,
 	tasks []taskSpec, assignMap map[string]nodeInfo,
 	taskStartTimes, taskCompletionTimes map[string]time.Time,
@@ -324,9 +381,20 @@ func profileCompletedRun(dynClient dynamic.Interface, db *sql.DB,
 	// Update template status.
 	updateTemplateStatus(dynClient, namespace, templateName, odagName, makespan)
 
-	// Run GC if needed.
+	// Run CR GC if needed.
 	maxRuns := extractRetentionMaxRuns(templateObj)
 	gcOldRuns(dynClient, namespace, templateName, maxRuns)
+
+	// Run data retention cleanup on all data-agent nodes.
+	dataCfg := extractDataRetentionConfig(templateObj)
+	if dataCfg.Policy != "none" {
+		nodeMap, err := getNodeInfoMap(client)
+		if err != nil {
+			log.Printf("[data-gc] failed to list nodes: %v", err)
+		} else {
+			cleanupRunData(dynClient, namespace, templateName, dataCfg, nodeMap)
+		}
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -436,6 +504,210 @@ func gcOldRuns(dynClient dynamic.Interface, namespace, templateName string, maxR
 			log.Printf("[template] GC: deleted old run %s", name)
 		}
 	}
+}
+
+// --------------------------------------------------------------------------
+// Data retention: on-disk cleanup via data-agent
+// --------------------------------------------------------------------------
+
+// dataAgentRunInfo mirrors the JSON returned by GET /runs on the data-agent.
+type dataAgentRunInfo struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// cleanupRunData enforces the data retention policy by calling the data-agent on
+// each node to delete on-disk data for evicted ODAG runs.
+func cleanupRunData(dynClient dynamic.Interface, namespace, templateName string,
+	cfg dataRetentionConfig, nodeMap map[string]nodeInfo) {
+
+	// List all completed runs for this template (sorted oldest first).
+	list, err := dynClient.Resource(odagGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("dsf.io/template=%s", templateName),
+		},
+	)
+	if err != nil {
+		log.Printf("[data-gc] failed to list runs for %s: %v", templateName, err)
+		return
+	}
+
+	sort.Slice(list.Items, func(i, j int) bool {
+		return list.Items[i].GetCreationTimestamp().Time.Before(
+			list.Items[j].GetCreationTimestamp().Time)
+	})
+
+	// Separate completed runs from running ones.
+	var completed []string // ODAG names, oldest first
+	active := make(map[string]bool)
+	for _, item := range list.Items {
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		name := item.GetName()
+		if phase == "Succeeded" || phase == "Failed" {
+			completed = append(completed, name)
+		} else {
+			active[name] = true
+		}
+	}
+
+	// Determine which completed runs to evict based on policy.
+	var toEvict []string
+	switch cfg.Policy {
+	case "immediate":
+		// Evict all completed runs except the one that just finished (last in list).
+		// Actually, evict ALL completed run data — "immediate" means no data kept.
+		toEvict = completed
+
+	case "delayed":
+		// For delayed, we check completion time. Evict runs completed more than
+		// deleteDelay ago. The just-completed run won't be evicted until later.
+		for _, item := range list.Items {
+			phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+			if phase != "Succeeded" && phase != "Failed" {
+				continue
+			}
+			ct, _, _ := unstructured.NestedString(item.Object, "status", "completionTime")
+			if ct == "" {
+				continue
+			}
+			completionTime, err := time.Parse(time.RFC3339, ct)
+			if err != nil {
+				continue
+			}
+			if time.Since(completionTime) > cfg.DeleteDelay {
+				toEvict = append(toEvict, item.GetName())
+			}
+		}
+
+	case "keepLatest":
+		// Keep the last K completed runs, evict the rest.
+		if len(completed) > cfg.KeepRuns {
+			toEvict = completed[:len(completed)-cfg.KeepRuns]
+		}
+
+	case "none":
+		return
+	}
+
+	// Apply maxSizePerNode cap: query each node for per-run sizes, evict oldest
+	// until under the cap. This composes with the policy-based eviction above.
+	if cfg.MaxSizePerNode > 0 && len(toEvict) < len(completed) {
+		toEvict = applySizeCap(templateName, completed, toEvict, active, cfg.MaxSizePerNode, nodeMap)
+	}
+
+	if len(toEvict) == 0 {
+		return
+	}
+
+	// Broadcast DELETE to all data-agent nodes for each evicted run.
+	evictSet := make(map[string]bool, len(toEvict))
+	for _, name := range toEvict {
+		evictSet[name] = true
+	}
+
+	for _, ni := range nodeMap {
+		if ni.ip == "" {
+			continue
+		}
+		for name := range evictSet {
+			deleteRunDataOnNode(ni.ip, name)
+		}
+	}
+
+	log.Printf("[data-gc] evicted data for %d run(s) of template %s across %d node(s)",
+		len(toEvict), templateName, len(nodeMap))
+}
+
+// applySizeCap adds additional runs to the eviction list if total data on any
+// node exceeds maxSizePerNode. It queries each node's data-agent for sizes and
+// evicts oldest completed runs first (excluding active runs and already-evicted ones).
+func applySizeCap(templateName string, completed, alreadyEvicted []string,
+	active map[string]bool, maxSize int64, nodeMap map[string]nodeInfo) []string {
+
+	evictSet := make(map[string]bool, len(alreadyEvicted))
+	for _, name := range alreadyEvicted {
+		evictSet[name] = true
+	}
+
+	// Query the first reachable node for sizes (all nodes get the same cross-node
+	// push data, so any node's size view is representative for the cap check).
+	var runs []dataAgentRunInfo
+	for _, ni := range nodeMap {
+		if ni.ip == "" {
+			continue
+		}
+		var err error
+		runs, err = queryNodeRuns(ni.ip, templateName)
+		if err == nil {
+			break
+		}
+	}
+
+	if len(runs) == 0 {
+		return alreadyEvicted
+	}
+
+	// Compute total size excluding already-evicted and active runs.
+	runSizeMap := make(map[string]int64, len(runs))
+	var totalSize int64
+	for _, r := range runs {
+		runSizeMap[r.Name] = r.Size
+		if !evictSet[r.Name] && !active[r.Name] {
+			totalSize += r.Size
+		}
+	}
+
+	// Evict oldest completed runs until under cap.
+	for _, name := range completed {
+		if totalSize <= maxSize {
+			break
+		}
+		if evictSet[name] || active[name] {
+			continue
+		}
+		evictSet[name] = true
+		totalSize -= runSizeMap[name]
+		log.Printf("[data-gc] size cap: evicting %s (freeing %d bytes)", name, runSizeMap[name])
+	}
+
+	result := make([]string, 0, len(evictSet))
+	for name := range evictSet {
+		result = append(result, name)
+	}
+	return result
+}
+
+// queryNodeRuns calls GET /runs?prefix=<template> on a data-agent node.
+func queryNodeRuns(nodeIP, templatePrefix string) ([]dataAgentRunInfo, error) {
+	url := fmt.Sprintf("http://%s:%d/runs?prefix=%s", nodeIP, dataAgentPort, templatePrefix)
+	resp, err := httpClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var runs []dataAgentRunInfo
+	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+// deleteRunDataOnNode calls DELETE /data/<odag> on a data-agent node.
+func deleteRunDataOnNode(nodeIP, odagName string) {
+	url := fmt.Sprintf("http://%s:%d/data/%s", nodeIP, dataAgentPort, odagName)
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[data-gc] DELETE %s on %s: %v", odagName, nodeIP, err)
+		return
+	}
+	resp.Body.Close()
 }
 
 // --------------------------------------------------------------------------

@@ -51,6 +51,25 @@ func stateFile(rel string) string   { return filepath.Join(dataDir, filepath.Cle
 func sendingFile(rel string) string { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-sending") }
 func bytesFile(rel string) string   { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-bytes") }
 
+// dirSize walks a directory tree and returns total bytes.
+func dirSize(path string) int64 {
+	var total int64
+	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	return total
+}
+
+// runInfo is returned by GET /runs — one entry per ODAG directory on this node.
+type runInfo struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"` // total bytes
+}
+
 func writeFile(path, value string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -295,6 +314,69 @@ func main() {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// GET /runs — list all ODAG directories on this node with their sizes.
+	// Optional query param ?prefix=<template> filters to runs matching that prefix.
+	// Response: JSON array of {"name":"<odag>","size":<bytes>} sorted by name.
+	http.HandleFunc("/runs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		prefix := r.URL.Query().Get("prefix")
+
+		entries, err := os.ReadDir(dataDir)
+		if err != nil {
+			http.Error(w, "failed to read data dir", http.StatusInternalServerError)
+			return
+		}
+
+		var runs []runInfo
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if prefix != "" && !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			size := dirSize(filepath.Join(dataDir, name))
+			runs = append(runs, runInfo{Name: name, Size: size})
+		}
+		if runs == nil {
+			runs = []runInfo{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(runs)
+	})
+
+	// DELETE /data/<odag> — remove all data for a specific ODAG run on this node.
+	http.HandleFunc("/data/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		odag := strings.TrimPrefix(r.URL.Path, "/data/")
+		odag = strings.TrimSuffix(odag, "/")
+		if odag == "" || strings.Contains(odag, "/") || strings.Contains(odag, "..") {
+			http.Error(w, "invalid odag name", http.StatusBadRequest)
+			return
+		}
+		target := filepath.Join(dataDir, odag)
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			w.WriteHeader(http.StatusOK) // idempotent
+			log.Printf("[data-agent/%s] DELETE %s: not found (already clean)", nodeName, odag)
+			return
+		}
+		if err := os.RemoveAll(target); err != nil {
+			http.Error(w, "failed to remove", http.StatusInternalServerError)
+			log.Printf("[data-agent/%s] DELETE %s: %v", nodeName, odag, err)
+			return
+		}
+		log.Printf("[data-agent/%s] DELETE %s: removed", nodeName, odag)
+		w.WriteHeader(http.StatusOK)
 	})
 
 	// PUT/GET /<odag>/<task>/output

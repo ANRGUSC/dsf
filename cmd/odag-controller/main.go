@@ -423,7 +423,7 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 
 	// Update per-task statuses and check overall completion.
 	updateTaskStatuses(dynClient, namespace, odagName, podItems, assignMap, tasks)
-	checkODAGCompletion(dynClient, podItems, namespace, odagName, len(tasks))
+	checkODAGCompletion(dynClient, client, podItems, namespace, odagName, len(tasks))
 }
 
 // --------------------------------------------------------------------------
@@ -925,7 +925,7 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 	)
 }
 
-func checkODAGCompletion(dynClient dynamic.Interface, pods []corev1.Pod, namespace, odagName string, totalTasks int) {
+func checkODAGCompletion(dynClient dynamic.Interface, client *kubernetes.Clientset, pods []corev1.Pod, namespace, odagName string, totalTasks int) {
 	if len(pods) < totalTasks {
 		return // not all layers launched yet
 	}
@@ -948,14 +948,14 @@ func checkODAGCompletion(dynClient dynamic.Interface, pods []corev1.Pod, namespa
 		updateODAGCompletion(dynClient, namespace, odagName, makespan)
 		log.Printf("[odag-ctrl] ODAG %s/%s Succeeded (makespan: %.2fs)", namespace, odagName, makespan)
 
-		// Trigger profiling if this ODAG was created from a template.
-		go profileODAGIfTemplated(dynClient, namespace, odagName, pods, makespan)
+		// Trigger profiling and data cleanup if this ODAG was created from a template.
+		go profileODAGIfTemplated(dynClient, client, namespace, odagName, pods, makespan)
 	}
 }
 
 // profileODAGIfTemplated checks if a completed ODAG was created from a template
 // and records profiling data if so.
-func profileODAGIfTemplated(dynClient dynamic.Interface, namespace, odagName string, pods []corev1.Pod, makespan float64) {
+func profileODAGIfTemplated(dynClient dynamic.Interface, client *kubernetes.Clientset, namespace, odagName string, pods []corev1.Pod, makespan float64) {
 	if profilerDB == nil {
 		return
 	}
@@ -1000,7 +1000,7 @@ func profileODAGIfTemplated(dynClient dynamic.Interface, namespace, odagName str
 		}
 	}
 
-	profileCompletedRun(dynClient, profilerDB, namespace, odagName, templateName, runNum,
+	profileCompletedRun(dynClient, client, profilerDB, namespace, odagName, templateName, runNum,
 		tasks, assignMap, taskStartTimes, taskCompletionTimes, makespan)
 }
 

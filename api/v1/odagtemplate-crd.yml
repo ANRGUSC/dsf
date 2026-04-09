@@ -83,13 +83,52 @@ spec:
                       description: Default expected output data size (e.g. "10MB").
                 retention:
                   type: object
-                  description: Controls garbage collection of old run CRs.
+                  description: Controls garbage collection of old run CRs and on-disk data.
                   properties:
                     maxRuns:
                       type: integer
                       default: 50
                       minimum: 1
                       description: Maximum number of completed ODAG runs to keep. Oldest are deleted first.
+                    data:
+                      type: object
+                      description: >
+                        Controls on-disk data retention on worker nodes (/data/dsf-outputs).
+                        Policies compose: keepRuns evicts oldest beyond K, maxSizePerNode
+                        enforces a hard cap, deleteDelay defers cleanup.
+                      properties:
+                        policy:
+                          type: string
+                          default: keepLatest
+                          enum: [immediate, delayed, keepLatest, none]
+                          description: >
+                            "immediate" deletes run data as soon as the ODAG completes.
+                            "delayed" waits deleteDelay before cleanup.
+                            "keepLatest" keeps data from the last keepRuns completed runs.
+                            "none" disables automatic data cleanup (manual only).
+                        keepRuns:
+                          type: integer
+                          default: 3
+                          minimum: 0
+                          description: >
+                            Number of recent completed runs whose data to keep on each node.
+                            Only effective when policy is "keepLatest". 0 means keep none
+                            (equivalent to "immediate").
+                        maxSizePerNode:
+                          type: string
+                          default: "0"
+                          description: >
+                            Hard cap on total data size per node for this template's runs
+                            (e.g. "2Gi", "500Mi"). Oldest run data is evicted first when
+                            the cap is exceeded. "0" means no size limit. Composable with
+                            any policy.
+                        deleteDelay:
+                          type: string
+                          default: "0s"
+                          description: >
+                            How long to wait after run completion before deleting data.
+                            Only effective when policy is "delayed" (e.g. "10m", "1h").
+                            Parsed as a Go duration.
                 retryPolicy:
                   type: object
                   properties:
