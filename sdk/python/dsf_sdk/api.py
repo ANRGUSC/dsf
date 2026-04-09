@@ -12,11 +12,25 @@ Usage in task images:
     inputs = task.recv_all()             # read all upstreams at once -> dict
     task.send(result)                    # routes to all successors automatically
 
-    # Continuous CDAG (pubsub transport):
-    while True:
-        item = task.recv("upstream-task")
-        result = process(item)
-        task.send(result)
+    # Continuous CDAG — iterator style:
+    for msg in task.subscribe("producer"):
+        result = process(msg)
+        task.publish(result)
+
+    # Continuous CDAG — multi-peer fan-in:
+    for peer, msg in task.subscribe_all():
+        handle(peer, msg)
+
+    # Continuous CDAG — targeted publish:
+    task.publish(data, to="fast-path")
+    task.publish(raw,  to="archiver")
+
+    # Continuous CDAG — callback style:
+    @task.on("sensor-1")
+    def handle_sensor(data):
+        task.publish(fuse(data))
+
+    task.run()  # blocking event loop
 
 The odag-controller injects (file transport):
     DSF_TRANSPORT_PATTERN     file
@@ -41,7 +55,7 @@ The cdag-controller injects (pubsub transport):
 import json
 import os
 import sys
-from typing import Any
+from typing import Any, Callable, Generator
 
 from dsf_sdk.transport.router import build_transport
 
@@ -188,3 +202,169 @@ class DSFTask:
     def close(self) -> None:
         """Close all open sockets / file handles. Call on shutdown."""
         self._transport.close()
+
+    # ------------------------------------------------------------------
+    # Streaming API (CDAG pub/sub)
+    # ------------------------------------------------------------------
+
+    def publish(self, data: Any, *, to: str | None = None) -> None:
+        """
+        Publish data to downstream subscribers (CDAG streaming).
+
+        Args:
+            data: JSON-serializable value.
+            to:   If None, broadcast to ALL successors.
+                  If set, send only to the named successor.
+
+        Examples:
+            task.publish(result)                  # broadcast
+            task.publish(result, to="processor")  # targeted
+        """
+        payload = json.dumps(data).encode()
+        topic = to.encode() if to else b""
+        self._transport.publish(payload, topic=topic)
+
+    def publish_raw(self, data: bytes, *, to: str | None = None) -> None:
+        """
+        Publish raw bytes to downstream subscribers (no JSON serialization).
+
+        Args:
+            data: Raw bytes payload.
+            to:   If None, broadcast. If set, targeted to named successor.
+        """
+        topic = to.encode() if to else b""
+        self._transport.publish(data, topic=topic)
+
+    def subscribe(self, peer: str) -> Generator[Any, None, None]:
+        """
+        Subscribe to a peer and yield messages as a continuous stream.
+
+        Blocks on each iteration until the next message arrives.
+
+        Args:
+            peer: Name of the upstream task to subscribe to.
+
+        Yields:
+            Deserialized JSON values from the peer.
+
+        Example:
+            for msg in task.subscribe("producer"):
+                result = process(msg)
+                task.publish(result)
+        """
+        sock = self._transport.subscribe(peer)
+        while True:
+            frames = sock.recv_multipart()
+            payload = frames[1] if len(frames) == 2 else frames[0]
+            yield json.loads(payload)
+
+    def subscribe_raw(self, peer: str) -> Generator[bytes, None, None]:
+        """
+        Subscribe to a peer and yield raw bytes as a continuous stream.
+
+        Args:
+            peer: Name of the upstream task to subscribe to.
+
+        Yields:
+            Raw bytes from the peer (no JSON deserialization).
+        """
+        sock = self._transport.subscribe(peer)
+        while True:
+            frames = sock.recv_multipart()
+            payload = frames[1] if len(frames) == 2 else frames[0]
+            yield payload
+
+    def subscribe_all(self) -> Generator[tuple[str, Any], None, None]:
+        """
+        Subscribe to ALL upstream dependencies and yield messages from any of them.
+
+        Uses polling across all dependency sockets. Blocks until at least one
+        message is available from any peer.
+
+        Yields:
+            (peer_name, deserialized_value) tuples.
+
+        Example:
+            for peer, msg in task.subscribe_all():
+                if peer == "sensor-1":
+                    handle_sensor(msg)
+                elif peer == "sensor-2":
+                    handle_camera(msg)
+        """
+        sockets: dict[str, Any] = {}
+        for dep in self.dependencies:
+            sockets[dep] = self._transport.subscribe(dep)
+        while True:
+            results = self._transport.poll_subscribers(sockets, timeout_ms=-1)
+            for peer_name, payload in results:
+                yield peer_name, json.loads(payload)
+
+    def subscribe_all_raw(self) -> Generator[tuple[str, bytes], None, None]:
+        """
+        Subscribe to ALL upstream dependencies and yield raw bytes from any of them.
+
+        Yields:
+            (peer_name, raw_bytes) tuples.
+        """
+        sockets: dict[str, Any] = {}
+        for dep in self.dependencies:
+            sockets[dep] = self._transport.subscribe(dep)
+        while True:
+            results = self._transport.poll_subscribers(sockets, timeout_ms=-1)
+            for peer_name, payload in results:
+                yield peer_name, payload
+
+    def on(self, peer: str) -> Callable:
+        """
+        Decorator to register a callback for messages from a specific peer.
+
+        Use with task.run() to start the event loop.
+
+        Example:
+            @task.on("sensor-1")
+            def handle_sensor(data):
+                task.publish(fuse(data))
+
+            @task.on("sensor-2")
+            def handle_camera(data):
+                task.publish(classify(data))
+
+            task.run()
+        """
+        if not hasattr(self, "_handlers"):
+            self._handlers: dict[str, Callable] = {}
+
+        def decorator(fn: Callable) -> Callable:
+            self._handlers[peer] = fn
+            return fn
+        return decorator
+
+    def run(self) -> None:
+        """
+        Start the callback event loop (CDAG streaming).
+
+        Blocks forever, polling all peers that have registered handlers
+        via @task.on() and dispatching messages to the appropriate callback.
+
+        Example:
+            @task.on("producer")
+            def handle(data):
+                task.publish(process(data))
+
+            task.run()  # blocks forever
+        """
+        if not hasattr(self, "_handlers") or not self._handlers:
+            raise RuntimeError("No handlers registered. Use @task.on('peer') to register handlers before calling run().")
+
+        sockets: dict[str, Any] = {}
+        for peer in self._handlers:
+            sockets[peer] = self._transport.subscribe(peer)
+
+        print(f"[{self.name}] event loop started, listening to: {list(self._handlers.keys())}", flush=True)
+        while True:
+            results = self._transport.poll_subscribers(sockets, timeout_ms=-1)
+            for peer_name, payload in results:
+                data = json.loads(payload)
+                handler = self._handlers.get(peer_name)
+                if handler:
+                    handler(data)

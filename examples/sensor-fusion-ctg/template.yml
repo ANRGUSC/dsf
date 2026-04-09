@@ -1,0 +1,84 @@
+apiVersion: dsf.io/v1
+kind: CDAGTemplate
+metadata:
+  name: sensor-fusion
+  namespace: dsf-system
+spec:
+  description: >
+    Sensor fusion pipeline demonstrating all CDAG SDK streaming methods:
+    publish (broadcast + targeted), subscribe, subscribe_all, and @on callbacks.
+    Topology: sensor-temp + sensor-humid → fuser → router → alerts + archive
+  scheduler: random
+  restartPolicy: Always
+  retention:
+    maxInstances: 5
+  tasks:
+    # ── Layer 0: Sensors (no dependencies) ──────────────────────────────
+    - name: sensor-temp
+      image: 192.168.1.163:5000/sensor-fusion-ctg:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: []
+      resources:
+        cpu: "100m"
+        memory: "64Mi"
+      constraints:
+        nodeNames: [anrg-1, anrg-3]
+
+    - name: sensor-humid
+      image: 192.168.1.163:5000/sensor-fusion-ctg:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: []
+      resources:
+        cpu: "100m"
+        memory: "64Mi"
+      constraints:
+        nodeNames: [anrg-4, anrg-5]
+
+    # ── Layer 1: Fuser (fan-in from both sensors via subscribe_all) ────
+    - name: fuser
+      image: 192.168.1.163:5000/sensor-fusion-ctg:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: ["sensor-temp", "sensor-humid"]
+      resources:
+        cpu: "200m"
+        memory: "128Mi"
+      constraints:
+        nodeNames: [anrg-6, anrg-7]
+
+    # ── Layer 2: Router (targeted publish to alerts + archive) ─────────
+    - name: router
+      image: 192.168.1.163:5000/sensor-fusion-ctg:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: ["fuser"]
+      resources:
+        cpu: "100m"
+        memory: "64Mi"
+      constraints:
+        nodeNames: [anrg-7, anrg-8]
+
+    # ── Layer 3: Consumers ─────────────────────────────────────────────
+    - name: alerts
+      image: 192.168.1.163:5000/sensor-fusion-ctg:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: ["router"]
+      resources:
+        cpu: "100m"
+        memory: "64Mi"
+      constraints:
+        nodeNames: [anrg-8, anrg-9]
+
+    - name: archive
+      image: 192.168.1.163:5000/sensor-fusion-ctg:latest
+      command: ["python", "task.py"]
+      replicas: 1
+      dependencies: ["router"]
+      resources:
+        cpu: "100m"
+        memory: "64Mi"
+      constraints:
+        nodeNames: [anrg-8, anrg-9]

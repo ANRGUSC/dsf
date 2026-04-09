@@ -31,6 +31,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -47,9 +48,10 @@ import (
 )
 
 var (
-	odagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
-	cdagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
-	odagTemplateGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odagtemplates"}
+	odagGVR             = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
+	cdagGVR             = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
+	odagTemplateGVR     = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odagtemplates"}
+	cdagTemplateGVR     = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdagtemplates"}
 )
 
 // globals set by persistent flags
@@ -79,7 +81,7 @@ inter-task communication. Specs are applied as Kubernetes custom resources
 	}
 	root.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", defaultKubeconfig(), "path to kubeconfig")
 
-	root.AddCommand(odagCmd(), cdagCmd(), templateCmd())
+	root.AddCommand(odagCmd(), cdagCmd(), templateCmd(), cdagTemplateCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -246,7 +248,29 @@ recreating any crashed pods automatically.`,
 	}
 	logs.Flags().StringVarP(&namespace, "namespace", "n", "default", "namespace")
 
-	cmd.AddCommand(submit, list, status, del, logs)
+	deploy := &cobra.Command{
+		Use:   "deploy <template-name>",
+		Short: "Deploy a new CDAG instance from a CDAGTemplate",
+		Long:  "Fetches the named CDAGTemplate and creates a new CDAG instance with an auto-incremented ID.",
+		Example: `  dsf cdag deploy pipeline-ctg
+  dsf cdag deploy pipeline-ctg -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: cdagDeployFromTemplate,
+	}
+	deploy.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	instances := &cobra.Command{
+		Use:   "instances <template-name>",
+		Short: "List all instances of a CDAGTemplate",
+		Long:  "List all CDAG instances created from a template, showing instance number, phase, and age.",
+		Example: `  dsf cdag instances pipeline-ctg
+  dsf cdag instances pipeline-ctg -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: cdagListInstances,
+	}
+	instances.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	cmd.AddCommand(submit, list, status, del, logs, deploy, instances)
 	return cmd
 }
 
@@ -884,6 +908,291 @@ func toFloat64(v interface{}) float64 {
 	default:
 		return 0
 	}
+}
+
+// ─── CDAG Template commands ──────────────────────────────────────────────────
+
+func cdagTemplateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cdag-template",
+		Short: "Manage CDAG templates",
+		Long: `Manage CDAGTemplates — reusable continuous DAG definitions.
+
+A CDAGTemplate defines a CDAG structure without deploying it. Use "dsf cdag deploy"
+to create instances from a template. The controller tracks instance status and
+garbage-collects old failed instances.`,
+	}
+
+	apply := &cobra.Command{
+		Use:   "apply -f <file>",
+		Short: "Register a CDAGTemplate from a YAML file",
+		Long:  "Create or update a CDAGTemplate custom resource from a YAML spec file.",
+		Example: `  dsf cdag-template apply -f examples/pipeline-ctg/template.yml
+  dsf cdag-template apply -f my-cdag-template.yml`,
+		RunE: submitResource(cdagTemplateGVR),
+	}
+	apply.Flags().StringVarP(&filename, "file", "f", "", "path to CDAGTemplate YAML (required)")
+	apply.MarkFlagRequired("file")
+
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List CDAGTemplates",
+		Long:  "List all CDAGTemplates in a namespace.",
+		Example: `  dsf cdag-template list
+  dsf cdag-template list -n dsf-system`,
+		RunE: cdagTemplateList,
+	}
+	list.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	show := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show CDAGTemplate detail",
+		Long:  "Show detailed information about a CDAGTemplate including tasks, retention, and instance status.",
+		Example: `  dsf cdag-template show pipeline-ctg
+  dsf cdag-template show pipeline-ctg -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: cdagTemplateShow,
+	}
+	show.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	del := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a CDAGTemplate",
+		Long:  "Delete a CDAGTemplate custom resource.",
+		Example: `  dsf cdag-template delete pipeline-ctg
+  dsf cdag-template delete pipeline-ctg -n dsf-system`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			dc, err := dynClient()
+			if err != nil {
+				return err
+			}
+			if err = dc.Resource(cdagTemplateGVR).Namespace(namespace).Delete(
+				context.Background(), name, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("delete cdag-template %s: %w", name, err)
+			}
+			fmt.Printf("cdagtemplate/%s deleted\n", name)
+			return nil
+		},
+	}
+	del.Flags().StringVarP(&namespace, "namespace", "n", "dsf-system", "namespace")
+
+	cmd.AddCommand(apply, list, show, del)
+	return cmd
+}
+
+func cdagTemplateList(cmd *cobra.Command, args []string) error {
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+	list, err := dc.Resource(cdagTemplateGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSCHEDULER\tTASKS\tINSTANCES\tLAST PHASE\tAGE")
+	for _, item := range list.Items {
+		scheduler, _, _ := unstructured.NestedString(item.Object, "spec", "scheduler")
+		tasks, _, _ := unstructured.NestedSlice(item.Object, "spec", "tasks")
+		instanceCount, _, _ := unstructured.NestedInt64(item.Object, "status", "instanceCount")
+		lastPhase, _, _ := unstructured.NestedString(item.Object, "status", "lastInstancePhase")
+		if lastPhase == "" {
+			lastPhase = "-"
+		}
+		age := fmtAge(item.GetCreationTimestamp().Time)
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n",
+			item.GetName(), scheduler, len(tasks), instanceCount, lastPhase, age)
+	}
+	return w.Flush()
+}
+
+func cdagTemplateShow(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+	obj, err := dc.Resource(cdagTemplateGVR).Namespace(namespace).Get(
+		context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	scheduler, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
+	description, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
+	restartPolicy, _, _ := unstructured.NestedString(obj.Object, "spec", "restartPolicy")
+	if restartPolicy == "" {
+		restartPolicy = "Always"
+	}
+	instanceCount, _, _ := unstructured.NestedInt64(obj.Object, "status", "instanceCount")
+	lastInstName, _, _ := unstructured.NestedString(obj.Object, "status", "lastInstanceName")
+	lastInstPhase, _, _ := unstructured.NestedString(obj.Object, "status", "lastInstancePhase")
+	maxInstances, _, _ := unstructured.NestedInt64(obj.Object, "spec", "retention", "maxInstances")
+	if maxInstances == 0 {
+		maxInstances = 20
+	}
+
+	fmt.Printf("CDAGTemplate: %s/%s\n", namespace, name)
+	if description != "" {
+		fmt.Printf("Description:  %s\n", description)
+	}
+	fmt.Printf("Scheduler:    %s\n", scheduler)
+	fmt.Printf("RestartPolicy:%s\n", restartPolicy)
+	fmt.Printf("Instances:    %d (max: %d)\n", instanceCount, maxInstances)
+	if lastInstName != "" {
+		fmt.Printf("Last Instance:%s (%s)\n", lastInstName, lastInstPhase)
+	}
+	fmt.Println()
+
+	// Tasks table.
+	tasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	if len(tasks) > 0 {
+		fmt.Println("Tasks:")
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(w, "  NAME\tIMAGE\tREPLICAS\tDEPS\tCONSTRAINTS")
+		for _, raw := range tasks {
+			t, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			tName, _ := t["name"].(string)
+			tImage, _ := t["image"].(string)
+			replicas := int64(1)
+			if r, ok, _ := unstructured.NestedInt64(t, "replicas"); ok {
+				replicas = r
+			}
+			var deps []string
+			if d, ok := t["dependencies"].([]interface{}); ok {
+				for _, v := range d {
+					if s, ok := v.(string); ok {
+						deps = append(deps, s)
+					}
+				}
+			}
+			depsStr := "-"
+			if len(deps) > 0 {
+				depsStr = strings.Join(deps, ", ")
+			}
+			var constraints []string
+			if c, ok, _ := unstructured.NestedStringSlice(t, "constraints", "nodeNames"); ok {
+				constraints = c
+			}
+			constraintStr := "-"
+			if len(constraints) > 0 {
+				constraintStr = strings.Join(constraints, ", ")
+			}
+			fmt.Fprintf(w, "  %s\t%s\t%d\t%s\t%s\n", tName, tImage, replicas, depsStr, constraintStr)
+		}
+		w.Flush()
+	}
+
+	return nil
+}
+
+func cdagDeployFromTemplate(cmd *cobra.Command, args []string) error {
+	templateName := args[0]
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+
+	// Fetch the template.
+	tmpl, err := dc.Resource(cdagTemplateGVR).Namespace(namespace).Get(
+		context.Background(), templateName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get cdag-template %s: %w", templateName, err)
+	}
+
+	// Find the highest existing instance number.
+	existing, err := dc.Resource(cdagGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("dsf.io/cdag-template=%s", templateName),
+		})
+	if err != nil {
+		return fmt.Errorf("list instances: %w", err)
+	}
+	maxInst := 0
+	for _, item := range existing.Items {
+		labels := item.GetLabels()
+		var v int
+		if _, scanErr := fmt.Sscanf(labels["dsf.io/instance"], "%d", &v); scanErr == nil && v > maxInst {
+			maxInst = v
+		}
+	}
+	instNum := maxInst + 1
+
+	cdagName := fmt.Sprintf("%s-inst-%03d", templateName, instNum)
+
+	// Extract spec, strip template-only fields.
+	spec, _, err := unstructured.NestedMap(tmpl.Object, "spec")
+	if err != nil {
+		return fmt.Errorf("extract spec: %w", err)
+	}
+	delete(spec, "description")
+	delete(spec, "retention")
+
+	// Create CDAG CR.
+	cdag := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "dsf.io/v1",
+			"kind":       "CDAG",
+			"metadata": map[string]interface{}{
+				"name":      cdagName,
+				"namespace": namespace,
+				"labels": map[string]interface{}{
+					"dsf.io/cdag-template": templateName,
+					"dsf.io/instance":      fmt.Sprintf("%d", instNum),
+				},
+			},
+			"spec": spec,
+		},
+	}
+
+	if _, err := dc.Resource(cdagGVR).Namespace(namespace).Create(
+		context.Background(), cdag, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create instance: %w", err)
+	}
+
+	fmt.Printf("Created instance %s (instance #%d from template %s)\n", cdagName, instNum, templateName)
+	return nil
+}
+
+func cdagListInstances(cmd *cobra.Command, args []string) error {
+	templateName := args[0]
+	dc, err := dynClient()
+	if err != nil {
+		return err
+	}
+
+	list, err := dc.Resource(cdagGVR).Namespace(namespace).List(
+		context.Background(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("dsf.io/cdag-template=%s", templateName),
+		})
+	if err != nil {
+		return err
+	}
+
+	if len(list.Items) == 0 {
+		fmt.Printf("No instances found for cdag-template %s in namespace %s\n", templateName, namespace)
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tINSTANCE\tPHASE\tAGE")
+	for _, item := range list.Items {
+		labels := item.GetLabels()
+		instNum := labels["dsf.io/instance"]
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		if phase == "" {
+			phase = "Pending"
+		}
+		age := fmtAge(item.GetCreationTimestamp().Time)
+		fmt.Fprintf(w, "%s\t#%s\t%s\t%s\n", item.GetName(), instNum, phase, age)
+	}
+	return w.Flush()
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

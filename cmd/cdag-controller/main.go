@@ -60,6 +60,7 @@ func main() {
 
 	log.Println("[cdag-ctrl] starting cdag-controller")
 
+	go watchCDAGTemplates(dynClient)
 	go watchCDAGs(dynClient, client)
 	go runReconcileLoop(dynClient, client)
 
@@ -207,6 +208,13 @@ func deployCDAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 
 	updateCDAGPhase(dynClient, namespace, cdagName, "Running", "")
 	log.Printf("[cdag-ctrl] CDAG %s is Running", key)
+
+	// If this CDAG was created from a template, update the template status.
+	if tplName := cdagTemplateNameFromLabels(obj.GetLabels()); tplName != "" {
+		updateCDAGTemplateStatus(dynClient, namespace, tplName, cdagName, "Running")
+		maxInst := extractRetentionMaxInstances(getTemplateForCDAG(obj))
+		gcOldInstances(dynClient, namespace, tplName, maxInst)
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -342,6 +350,11 @@ func reconcileCDAG(dynClient dynamic.Interface, client *kubernetes.Clientset, ob
 		phase = "Degraded"
 	}
 	updateCDAGPhase(dynClient, namespace, cdagName, phase, "")
+
+	// Keep the template's lastInstancePhase in sync.
+	if tplName := cdagTemplateNameFromLabels(obj.GetLabels()); tplName != "" {
+		updateCDAGTemplatePhase(dynClient, namespace, tplName, cdagName, phase)
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -472,10 +485,23 @@ func getNodes(client *kubernetes.Clientset) ([]string, error) {
 
 // buildEnvVars injects DSF_PEER_* and transport config into each CDAG task pod.
 func buildEnvVars(cdagName, namespace string, task cdagTaskSpec, allTasks []cdagTaskSpec, svcNames map[string]string) []corev1.EnvVar {
+	// Compute successors: tasks that list this task as a dependency.
+	var successors []string
+	for _, other := range allTasks {
+		for _, dep := range other.Dependencies {
+			if dep == task.Name {
+				successors = append(successors, other.Name)
+				break
+			}
+		}
+	}
+
 	env := []corev1.EnvVar{
 		{Name: "DSF_TASK_NAME", Value: task.Name},
 		{Name: "DSF_TRANSPORT_PATTERN", Value: "pubsub"},
 		{Name: "DSF_PUB_PORT", Value: fmt.Sprintf("%d", zmqPort)},
+		{Name: "DSF_DEPS", Value: strings.Join(task.Dependencies, ",")},
+		{Name: "DSF_SUCCESSORS", Value: strings.Join(successors, ",")},
 		{Name: "PYTHONUNBUFFERED", Value: "1"},
 	}
 	for _, other := range allTasks {

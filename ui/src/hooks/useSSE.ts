@@ -34,6 +34,10 @@ export function useSSE() {
           qc.invalidateQueries({ queryKey: ['templates'] })
           qc.invalidateQueries({ queryKey: ['template', ev.namespace, ev.name] })
           qc.invalidateQueries({ queryKey: ['template-runs', ev.namespace, ev.name] })
+        } else if (ev.resource === 'cdagtemplates') {
+          qc.invalidateQueries({ queryKey: ['cdag-templates'] })
+          qc.invalidateQueries({ queryKey: ['cdag-template', ev.namespace, ev.name] })
+          qc.invalidateQueries({ queryKey: ['cdag-template-instances', ev.namespace, ev.name] })
         }
       } catch {
         // ignore malformed events

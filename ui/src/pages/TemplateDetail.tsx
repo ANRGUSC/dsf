@@ -3,12 +3,13 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, TemplateRun } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
+import TemplateGraph from '@/components/TemplateGraph'
 
-type Tab = 'tasks' | 'runs' | 'profile' | 'spec'
+type Tab = 'graph' | 'tasks' | 'runs' | 'profile' | 'spec'
 
 export default function TemplateDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
-  const [tab, setTab] = useState<Tab>('tasks')
+  const [tab, setTab] = useState<Tab>('graph')
   const queryClient = useQueryClient()
 
   const { data: template, isLoading, error } = useQuery({
@@ -37,6 +38,7 @@ export default function TemplateDetail() {
   if (!template) return <p className="text-on-muted">Not found</p>
 
   const tabs: { key: Tab; label: string }[] = [
+    { key: 'graph', label: 'Graph' },
     { key: 'tasks', label: 'Tasks' },
     { key: 'runs', label: `Runs (${template.runCount})` },
     { key: 'profile', label: 'Profile' },
@@ -51,6 +53,8 @@ export default function TemplateDetail() {
           <Link to="/templates" className="text-on-muted text-sm hover:text-on-secondary">
             Templates
           </Link>
+          <span className="text-on-faint mx-1">/</span>
+          <span className="text-on-muted text-sm">ODAG</span>
           <span className="text-on-faint mx-2">/</span>
           <h1 className="text-lg font-semibold inline">{template.name}</h1>
           {template.description && (
@@ -104,6 +108,7 @@ export default function TemplateDetail() {
       </div>
 
       {/* Tab content */}
+      {tab === 'graph' && <TemplateGraph tasks={template.spec.tasks} type="odag" />}
       {tab === 'tasks' && <TasksTab spec={template.spec} />}
       {tab === 'runs' && <RunsTab runs={runs ?? []} namespace={namespace!} />}
       {tab === 'profile' && <ProfileTab profileSummary={template.profileSummary} />}

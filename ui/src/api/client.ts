@@ -145,6 +145,40 @@ export interface TemplateRun {
   createdAt: string
 }
 
+export interface CDAGTemplateSummary {
+  name: string
+  namespace: string
+  description: string
+  scheduler: string
+  taskCount: number
+  instanceCount: number
+  lastInstanceName?: string
+  lastInstancePhase?: string
+  createdAt: string
+}
+
+export interface CDAGTemplateDetail extends CDAGTemplateSummary {
+  spec: {
+    tasks: Array<{
+      name: string
+      image: string
+      dependencies: string[]
+      replicas?: number
+      resources?: { cpu?: string; memory?: string }
+      constraints?: { nodeNames?: string[] }
+    }>
+    retention?: { maxInstances?: number }
+  }
+}
+
+export interface CDAGTemplateInstance {
+  name: string
+  namespace: string
+  instance: string
+  phase: string
+  createdAt: string
+}
+
 export interface BatchODAGEntry {
   name: string
   delay: number
@@ -200,5 +234,19 @@ export const api = {
 
   runTemplate: (namespace: string, name: string): Promise<{ name: string; run: number; message: string }> =>
     fetch(`/api/templates/${namespace}/${name}/run`, { method: 'POST' })
+      .then(res => { if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.json() }),
+
+  // CDAG Templates
+  listCDAGTemplates: (): Promise<CDAGTemplateSummary[]> =>
+    get('/api/cdag-templates'),
+
+  getCDAGTemplate: (namespace: string, name: string): Promise<CDAGTemplateDetail> =>
+    get(`/api/cdag-templates/${namespace}/${name}`),
+
+  getCDAGTemplateInstances: (namespace: string, name: string): Promise<CDAGTemplateInstance[]> =>
+    get(`/api/cdag-templates/${namespace}/${name}/instances`),
+
+  deployCDAGTemplate: (namespace: string, name: string): Promise<{ name: string; instance: number; message: string }> =>
+    fetch(`/api/cdag-templates/${namespace}/${name}/deploy`, { method: 'POST' })
       .then(res => { if (!res.ok) throw new Error(`${res.status} ${res.statusText}`); return res.json() }),
 }

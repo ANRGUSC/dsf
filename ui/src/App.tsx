@@ -1,11 +1,11 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, useSearchParams } from 'react-router-dom'
 import ODAGList from '@/pages/ODAGList'
 import ODAGDetail from '@/pages/ODAGDetail'
 import CDAGList from '@/pages/CDAGList'
 import CDAGDetail from '@/pages/CDAGDetail'
-import BatchExecution from '@/pages/BatchExecution'
 import TemplateList from '@/pages/TemplateList'
 import TemplateDetail from '@/pages/TemplateDetail'
+import CDAGTemplateDetail from '@/pages/CDAGTemplateDetail'
 import { useSSE } from '@/hooks/useSSE'
 import { useTheme } from '@/hooks/useTheme'
 
@@ -17,13 +17,33 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<ODAGList />} />
       <Route path="/odags/:namespace/:name" element={<ODAGDetail />} />
-      <Route path="/batch" element={<BatchExecution />} />
       <Route path="/templates" element={<TemplateList />} />
-      <Route path="/templates/:namespace/:name" element={<TemplateDetail />} />
+      <Route path="/templates/odag/:namespace/:name" element={<TemplateDetail />} />
+      <Route path="/templates/cdag/:namespace/:name" element={<CDAGTemplateDetail />} />
       <Route path="/cdags" element={<CDAGList />} />
       <Route path="/cdags/:namespace/:name" element={<CDAGDetail />} />
     </Routes>
   )
+}
+
+/** NavLink that highlights when ?type= matches the expected value on /templates */
+function TemplateNavLink({ type, children }: { type: string; children: React.ReactNode }) {
+  return (
+    <NavLink
+      to={`/templates?type=${type}`}
+      className={() => 'text-on-muted hover:text-on-secondary'}
+    >
+      {/* We render children through a wrapper that checks the real active state */}
+      <TemplateNavInner type={type}>{children}</TemplateNavInner>
+    </NavLink>
+  )
+}
+
+function TemplateNavInner({ type, children }: { type: string; children: React.ReactNode }) {
+  const [searchParams] = useSearchParams()
+  const pathname = window.location.pathname
+  const isActive = pathname === '/templates' && searchParams.get('type') === type
+  return <span className={isActive ? 'text-on' : ''}>{children}</span>
 }
 
 export default function App() {
@@ -35,6 +55,7 @@ export default function App() {
         <header className="border-b border-line px-6 py-3 flex items-center gap-8">
           <span className="font-bold text-on tracking-tight">DSF</span>
           <nav className="flex gap-6 text-sm">
+            <TemplateNavLink type="odag">ODAG Templates</TemplateNavLink>
             <NavLink
               to="/"
               end
@@ -44,22 +65,7 @@ export default function App() {
             >
               ODAGs
             </NavLink>
-            <NavLink
-              to="/batch"
-              className={({ isActive }) =>
-                isActive ? 'text-on' : 'text-on-muted hover:text-on-secondary'
-              }
-            >
-              Batch
-            </NavLink>
-            <NavLink
-              to="/templates"
-              className={({ isActive }) =>
-                isActive ? 'text-on' : 'text-on-muted hover:text-on-secondary'
-              }
-            >
-              Templates
-            </NavLink>
+            <TemplateNavLink type="cdag">CDAG Templates</TemplateNavLink>
             <NavLink
               to="/cdags"
               className={({ isActive }) =>

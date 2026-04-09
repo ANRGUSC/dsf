@@ -30,9 +30,10 @@ import (
 // --------------------------------------------------------------------------
 
 var (
-	odagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
-	cdagGVR         = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
-	odagTemplateGVR = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odagtemplates"}
+	odagGVR             = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odags"}
+	cdagGVR             = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdags"}
+	odagTemplateGVR     = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "odagtemplates"}
+	cdagTemplateGVR     = schema.GroupVersionResource{Group: "dsf.io", Version: "v1", Resource: "cdagtemplates"}
 )
 
 // --------------------------------------------------------------------------
@@ -43,9 +44,10 @@ type Server struct {
 	dynClient dynamic.Interface
 	db        *sql.DB
 	mu        sync.RWMutex
-	odags     map[string]*unstructured.Unstructured // "ns/name" -> obj
-	cdags     map[string]*unstructured.Unstructured
-	templates map[string]*unstructured.Unstructured
+	odags          map[string]*unstructured.Unstructured // "ns/name" -> obj
+	cdags          map[string]*unstructured.Unstructured
+	templates      map[string]*unstructured.Unstructured
+	cdagTemplates  map[string]*unstructured.Unstructured
 
 	// SSE clients: each client gets a channel of JSON event bytes.
 	sseMu      sync.Mutex
@@ -56,9 +58,10 @@ func newServer(dynClient dynamic.Interface, db *sql.DB) *Server {
 	return &Server{
 		dynClient:  dynClient,
 		db:         db,
-		odags:      make(map[string]*unstructured.Unstructured),
-		cdags:      make(map[string]*unstructured.Unstructured),
-		templates:  make(map[string]*unstructured.Unstructured),
+		odags:         make(map[string]*unstructured.Unstructured),
+		cdags:         make(map[string]*unstructured.Unstructured),
+		templates:     make(map[string]*unstructured.Unstructured),
+		cdagTemplates: make(map[string]*unstructured.Unstructured),
 		sseClients: make(map[chan []byte]struct{}),
 	}
 }
@@ -95,6 +98,7 @@ func main() {
 	go srv.watchResources(odagGVR, &srv.odags)
 	go srv.watchResources(cdagGVR, &srv.cdags)
 	go srv.watchResources(odagTemplateGVR, &srv.templates)
+	go srv.watchResources(cdagTemplateGVR, &srv.cdagTemplates)
 
 	// HTTP routes.
 	mux := http.NewServeMux()
@@ -110,6 +114,11 @@ func main() {
 	mux.HandleFunc("GET /api/templates/{namespace}/{name}/runs", srv.handleGetTemplateRuns)
 	mux.HandleFunc("POST /api/templates/{namespace}/{name}/run", srv.handleRunTemplate)
 	mux.HandleFunc("DELETE /api/templates/{namespace}/{name}", srv.handleDeleteTemplate)
+	mux.HandleFunc("GET /api/cdag-templates", srv.handleListCDAGTemplates)
+	mux.HandleFunc("GET /api/cdag-templates/{namespace}/{name}", srv.handleGetCDAGTemplate)
+	mux.HandleFunc("GET /api/cdag-templates/{namespace}/{name}/instances", srv.handleGetCDAGTemplateInstances)
+	mux.HandleFunc("POST /api/cdag-templates/{namespace}/{name}/deploy", srv.handleDeployCDAGTemplate)
+	mux.HandleFunc("DELETE /api/cdag-templates/{namespace}/{name}", srv.handleDeleteCDAGTemplate)
 	mux.HandleFunc("GET /api/events", srv.handleSSE)
 
 	// Serve compiled React frontend from ui/dist (embedded at build time).
@@ -324,7 +333,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.RUnlock()
 	result := make([]map[string]interface{}, 0, len(s.templates))
 	for _, obj := range s.templates {
-		result = append(result, templateSummary(obj))
+		result = append(result, s.templateSummary(obj))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return fmt.Sprint(result[i]["name"]) < fmt.Sprint(result[j]["name"])
@@ -342,7 +351,7 @@ func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, templateDetail(obj))
+	writeJSON(w, s.templateDetail(obj))
 }
 
 func (s *Server) handleGetTemplateRuns(w http.ResponseWriter, r *http.Request) {
@@ -459,14 +468,34 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 // Template response builders
 // --------------------------------------------------------------------------
 
-func templateSummary(obj *unstructured.Unstructured) map[string]interface{} {
+// templateSummary builds the summary for an ODAGTemplate. It counts runs by
+// scanning the odags cache (more reliable than status.runCount alone).
+func (s *Server) templateSummary(obj *unstructured.Unstructured) map[string]interface{} {
 	tasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
 	sched, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
 	desc, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
-	runCount := nestedFloat(obj.Object, "status", "runCount")
 	lastMakespan := nestedFloat(obj.Object, "status", "lastRunMakespan")
-	lastRunName, _, _ := unstructured.NestedString(obj.Object, "status", "lastRunName")
-	lastRunPhase, _, _ := unstructured.NestedString(obj.Object, "status", "lastRunPhase")
+
+	name := obj.GetName()
+	ns := obj.GetNamespace()
+
+	// Count runs and find the latest one from the cache.
+	runCount := 0
+	var lastRunName, lastRunPhase string
+	var lastCreated time.Time
+	for _, odag := range s.odags {
+		labels := odag.GetLabels()
+		if labels["dsf.io/template"] == name && odag.GetNamespace() == ns {
+			runCount++
+			ct := odag.GetCreationTimestamp().Time
+			if ct.After(lastCreated) {
+				lastCreated = ct
+				lastRunName = odag.GetName()
+				phase, _, _ := unstructured.NestedString(odag.Object, "status", "phase")
+				lastRunPhase = defaultStr(phase, "Pending")
+			}
+		}
+	}
 
 	profilingEnabled := true
 	if v, ok, _ := unstructured.NestedBool(obj.Object, "spec", "profiling", "enabled"); ok {
@@ -474,12 +503,12 @@ func templateSummary(obj *unstructured.Unstructured) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"name":             obj.GetName(),
-		"namespace":        obj.GetNamespace(),
+		"name":             name,
+		"namespace":        ns,
 		"description":      desc,
 		"scheduler":        defaultStr(sched, "random"),
 		"taskCount":        len(tasks),
-		"runCount":         int(runCount),
+		"runCount":         runCount,
 		"lastRunMakespan":  lastMakespan,
 		"lastRunName":      lastRunName,
 		"lastRunPhase":     lastRunPhase,
@@ -488,8 +517,8 @@ func templateSummary(obj *unstructured.Unstructured) map[string]interface{} {
 	}
 }
 
-func templateDetail(obj *unstructured.Unstructured) map[string]interface{} {
-	summary := templateSummary(obj)
+func (s *Server) templateDetail(obj *unstructured.Unstructured) map[string]interface{} {
+	summary := s.templateSummary(obj)
 	specTasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
 	profiling, _, _ := unstructured.NestedMap(obj.Object, "spec", "profiling")
 	defaults, _, _ := unstructured.NestedMap(obj.Object, "spec", "defaults")
@@ -504,6 +533,196 @@ func templateDetail(obj *unstructured.Unstructured) map[string]interface{} {
 	}
 	if profileSummary != nil {
 		summary["profileSummary"] = profileSummary
+	}
+	return summary
+}
+
+// --------------------------------------------------------------------------
+// CDAG Template handlers
+// --------------------------------------------------------------------------
+
+func (s *Server) handleListCDAGTemplates(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]map[string]interface{}, 0, len(s.cdagTemplates))
+	for _, obj := range s.cdagTemplates {
+		result = append(result, s.cdagTemplateSummary(obj))
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return fmt.Sprint(result[i]["name"]) < fmt.Sprint(result[j]["name"])
+	})
+	writeJSON(w, result)
+}
+
+func (s *Server) handleGetCDAGTemplate(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	s.mu.RLock()
+	obj, ok := s.cdagTemplates[ns+"/"+name]
+	s.mu.RUnlock()
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, s.cdagTemplateDetail(obj))
+}
+
+func (s *Server) handleGetCDAGTemplateInstances(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	s.mu.RLock()
+	var instances []map[string]interface{}
+	for _, obj := range s.cdags {
+		labels := obj.GetLabels()
+		if labels["dsf.io/cdag-template"] == name && obj.GetNamespace() == ns {
+			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
+			instances = append(instances, map[string]interface{}{
+				"name":      obj.GetName(),
+				"namespace": ns,
+				"instance":  labels["dsf.io/instance"],
+				"phase":     defaultStr(phase, "Pending"),
+				"createdAt": obj.GetCreationTimestamp().UTC().Format(time.RFC3339),
+			})
+		}
+	}
+	s.mu.RUnlock()
+
+	sort.Slice(instances, func(i, j int) bool {
+		return fmt.Sprint(instances[i]["createdAt"]) < fmt.Sprint(instances[j]["createdAt"])
+	})
+	if instances == nil {
+		instances = []map[string]interface{}{}
+	}
+	writeJSON(w, instances)
+}
+
+func (s *Server) handleDeployCDAGTemplate(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	s.mu.RLock()
+	tmplObj, ok := s.cdagTemplates[ns+"/"+name]
+	s.mu.RUnlock()
+	if !ok {
+		http.Error(w, "cdag-template not found", http.StatusNotFound)
+		return
+	}
+
+	// Find the highest existing instance number.
+	s.mu.RLock()
+	maxInst := 0
+	for _, obj := range s.cdags {
+		labels := obj.GetLabels()
+		if labels["dsf.io/cdag-template"] == name && obj.GetNamespace() == ns {
+			if n, err := strconv.Atoi(labels["dsf.io/instance"]); err == nil && n > maxInst {
+				maxInst = n
+			}
+		}
+	}
+	s.mu.RUnlock()
+	instNum := maxInst + 1
+	cdagName := fmt.Sprintf("%s-inst-%03d", name, instNum)
+
+	// Extract spec, strip template-only fields.
+	spec, _, _ := unstructured.NestedMap(tmplObj.Object, "spec")
+	delete(spec, "description")
+	delete(spec, "retention")
+
+	cdag := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "dsf.io/v1",
+			"kind":       "CDAG",
+			"metadata": map[string]interface{}{
+				"name":      cdagName,
+				"namespace": ns,
+				"labels": map[string]interface{}{
+					"dsf.io/cdag-template": name,
+					"dsf.io/instance":      fmt.Sprintf("%d", instNum),
+				},
+			},
+			"spec": spec,
+		},
+	}
+
+	if _, err := s.dynClient.Resource(cdagGVR).Namespace(ns).Create(
+		context.Background(), cdag, metav1.CreateOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"name":     cdagName,
+		"instance": instNum,
+		"message":  fmt.Sprintf("Created instance %s from template %s", cdagName, name),
+	})
+}
+
+func (s *Server) handleDeleteCDAGTemplate(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	if err := s.dynClient.Resource(cdagTemplateGVR).Namespace(ns).Delete(
+		context.Background(), name, metav1.DeleteOptions{}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "deleted", "name": name})
+}
+
+// --------------------------------------------------------------------------
+// CDAG Template response builders
+// --------------------------------------------------------------------------
+
+// cdagTemplateSummary builds the summary for a CDAGTemplate. It counts instances
+// by scanning the cdags cache (more reliable than status.instanceCount which
+// depends on the controller updating it).
+func (s *Server) cdagTemplateSummary(obj *unstructured.Unstructured) map[string]interface{} {
+	tasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	sched, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
+	desc, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
+
+	name := obj.GetName()
+	ns := obj.GetNamespace()
+
+	// Count instances and find the latest one from the cache.
+	instanceCount := 0
+	var lastInstName, lastInstPhase string
+	var lastCreated time.Time
+	for _, cdag := range s.cdags {
+		labels := cdag.GetLabels()
+		if labels["dsf.io/cdag-template"] == name && cdag.GetNamespace() == ns {
+			instanceCount++
+			ct := cdag.GetCreationTimestamp().Time
+			if ct.After(lastCreated) {
+				lastCreated = ct
+				lastInstName = cdag.GetName()
+				phase, _, _ := unstructured.NestedString(cdag.Object, "status", "phase")
+				lastInstPhase = defaultStr(phase, "Pending")
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"name":              name,
+		"namespace":         ns,
+		"description":       desc,
+		"scheduler":         defaultStr(sched, "random"),
+		"taskCount":         len(tasks),
+		"instanceCount":     instanceCount,
+		"lastInstanceName":  lastInstName,
+		"lastInstancePhase": lastInstPhase,
+		"createdAt":         obj.GetCreationTimestamp().UTC().Format(time.RFC3339),
+	}
+}
+
+func (s *Server) cdagTemplateDetail(obj *unstructured.Unstructured) map[string]interface{} {
+	summary := s.cdagTemplateSummary(obj)
+	specTasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
+	retention, _, _ := unstructured.NestedMap(obj.Object, "spec", "retention")
+
+	summary["spec"] = map[string]interface{}{
+		"tasks":     specTasks,
+		"retention": retention,
 	}
 	return summary
 }

@@ -12,9 +12,16 @@ rules:
   # CDAG CRD
   - apiGroups: ["dsf.io"]
     resources: ["cdags"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["dsf.io"]
     resources: ["cdags/status"]
+    verbs: ["update", "patch"]
+  # CDAGTemplate CRD
+  - apiGroups: ["dsf.io"]
+    resources: ["cdagtemplates"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["dsf.io"]
+    resources: ["cdagtemplates/status"]
     verbs: ["update", "patch"]
   # Pods (create and manage task pods)
   - apiGroups: [""]
