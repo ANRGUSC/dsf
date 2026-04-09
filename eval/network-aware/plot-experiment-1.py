@@ -104,7 +104,7 @@ def plot_odag():
 
 def plot_cdag():
     """Plot CDAG latency/throughput comparison."""
-    csv_path = os.path.join(RESULTS_DIR, "cdag-experiment1.csv")
+    csv_path = os.path.join(RESULTS_DIR, "cdag-latency.csv")
     if not os.path.exists(csv_path):
         print(f"  Skipping CDAG plots: {csv_path} not found")
         return

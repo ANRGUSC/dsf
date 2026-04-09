@@ -89,13 +89,26 @@ Full CRD-based lifecycle on k3s (lightweight Kubernetes for edge):
 
 **Data collected**: per-run placement files, full ODAG status JSONs, profiler snapshots after each HEFT run (EMA runtimes per task per node).
 
-### Experiment 1B: CDAG Network-Aware Scheduling 🔄 RUNNING
+### Experiment 1B: CDAG Network-Aware Scheduling ✅ COMPLETE
 
-**Setup**: Camera Fusion Pipeline (9 tasks, 500KB frames at 2Hz), random vs locality scheduler, 5 instances × 2 min each.
+**Setup**: Camera Fusion Pipeline (9 tasks, 5MB frames at 1Hz), tc-shaped links on anrg-3..6, random vs locality scheduler, 5 instances × 2 min each.
 
-**Metrics**: end-to-end latency (camera → sink), throughput at sink (msg/s)
+| Metric | Random (baseline) | Locality (network-aware) |
+|--------|-------------------|--------------------------|
+| Avg latency | 590ms | 462ms |
+| P95 latency | 1238ms | 749ms |
+| Latency std | 319ms | 233ms |
+| Throughput | 3.9 msg/s | 3.9 msg/s |
+| **Avg improvement** | — | **22%** |
+| **P95 improvement** | — | **39%** |
 
-**Expected result**: Locality scheduler co-locates preprocess with cameras on same node, reducing cross-node 500KB transfers. Should show lower latency and higher throughput.
+**Figures**: `eval/network-aware/figures/cdag-latency-throughput.png`
+
+**Key observations**:
+- P95 tail latency improved by 39% — critical for real-time edge applications
+- Random has extreme variance (201-949ms) depending on placement luck; locality is more predictable
+- Throughput is identical (bottlenecked by camera rate, not network) — placement affects latency not throughput at this scale
+- Locality avoids placing preprocess on anrg-6 (100Mbps link) when receiving from cameras on anrg-3/4 (1Gbps available)
 
 ### Experiment 2: Scalability — P2P vs Centralized 📋 PLANNED
 

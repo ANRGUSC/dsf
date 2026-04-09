@@ -5,9 +5,10 @@ Camera Fusion Pipeline — evaluation CDAG for Experiment 1.
 Topology:
     camera-1..4 → preprocess → detector → tracker → alert-sink + log-sink
 
-Each camera generates ~500KB synthetic frames at 2Hz. The pipeline processes
-frames through detection and tracking stages. Sinks measure end-to-end latency
-and throughput for evaluation.
+Each camera generates ~5MB synthetic frames at 1Hz. The large frame size
+ensures that cross-node transfers on bandwidth-constrained links (100Mbps)
+take measurable time (~400ms), making placement decisions visible in the
+latency metrics.
 
 Role is determined by DSF_TASK_NAME environment variable.
 """
@@ -21,8 +22,8 @@ from dsf_sdk import DSFTask
 task = DSFTask()
 role = os.environ.get("DSF_TASK_NAME", "unknown")
 
-FRAME_SIZE = 500_000  # 500KB per frame
-CAMERA_HZ = 2         # 2 frames per second
+FRAME_SIZE = 5_000_000  # 5MB per frame (high-res camera)
+CAMERA_HZ = 1           # 1 frame per second
 
 
 # ── camera-N: generate synthetic frames ─────────────────────────────────

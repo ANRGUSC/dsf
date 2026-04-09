@@ -11,14 +11,15 @@
 #                         kubectl apply -f eval/cdag-camera-pipeline/template-locality.yml
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 INSTANCES=${1:-5}
 DURATION=${2:-180}  # seconds per instance
 NS="dsf-system"
 DSF="go run ./cmd/cli/"
-OUT="eval/results/cdag-experiment1.csv"
-mkdir -p eval/results
+RESULTS="eval/network-aware/results"
+OUT="$RESULTS/cdag-latency.csv"
+mkdir -p "$RESULTS"
 
 echo "instance,scheduler,template,cdag_name,avg_latency,p50_latency,p95_latency,throughput" > "$OUT"
 
@@ -57,8 +58,8 @@ run_instance() {
     echo "$inst_num,$scheduler,$template,$cdag_name,$avg_lat,$p50_lat,$p95_lat,$throughput" >> "$OUT"
 
     # Also dump full log-sink output for detailed analysis.
-    kubectl logs -n "$NS" "$log_sink_pod" > "eval/results/${cdag_name}-log-sink.log" 2>/dev/null || true
-    kubectl logs -n "$NS" "${cdag_name}-alert-sink-0" > "eval/results/${cdag_name}-alert-sink.log" 2>/dev/null || true
+    kubectl logs -n "$NS" "$log_sink_pod" > "$RESULTS/${cdag_name}-log-sink.log" 2>/dev/null || true
+    kubectl logs -n "$NS" "${cdag_name}-alert-sink-0" > "$RESULTS/${cdag_name}-alert-sink.log" 2>/dev/null || true
 
     # Record placement.
     echo "[eval] Placement for $cdag_name:"

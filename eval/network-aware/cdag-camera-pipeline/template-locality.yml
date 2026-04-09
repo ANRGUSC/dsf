@@ -4,7 +4,7 @@ metadata:
   name: camera-pipeline-locality
   namespace: dsf-system
 spec:
-  description: "Camera fusion pipeline (locality scheduler) — evaluation"
+  description: "Camera fusion pipeline (locality scheduler) — 5MB frames at 1Hz"
   scheduler: locality
   restartPolicy: Always
   retention:
@@ -15,7 +15,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: []
-      dataRate: "1MB/s"
+      dataRate: "5MB/s"
       resources:
         cpu: "200m"
         memory: "128Mi"
@@ -27,7 +27,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: []
-      dataRate: "1MB/s"
+      dataRate: "5MB/s"
       resources:
         cpu: "200m"
         memory: "128Mi"
@@ -39,7 +39,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: []
-      dataRate: "1MB/s"
+      dataRate: "5MB/s"
       resources:
         cpu: "200m"
         memory: "128Mi"
@@ -51,7 +51,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: []
-      dataRate: "1MB/s"
+      dataRate: "5MB/s"
       resources:
         cpu: "200m"
         memory: "128Mi"
@@ -63,7 +63,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: ["camera-1", "camera-2", "camera-3", "camera-4"]
-      dataRate: "1.6MB/s"
+      dataRate: "8MB/s"
       resources:
         cpu: "300m"
         memory: "256Mi"
@@ -75,7 +75,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: ["preprocess"]
-      dataRate: "400KB/s"
+      dataRate: "2MB/s"
       resources:
         cpu: "500m"
         memory: "256Mi"
@@ -87,7 +87,7 @@ spec:
       command: ["python", "task.py"]
       replicas: 1
       dependencies: ["detector"]
-      dataRate: "100KB/s"
+      dataRate: "500KB/s"
       resources:
         cpu: "300m"
         memory: "128Mi"
