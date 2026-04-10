@@ -1,0 +1,24 @@
+[sink] DSFTask initialized (transport: pubsub)
+[sink] sink: subscribing to all workers (fan-in)
+[sink] STATS n=50 rate=10.5msg/s lat_avg=0.0306s p50=0.0124s p95=0.1245s p99=0.5163s
+[sink] STATS n=100 rate=9.9msg/s lat_avg=0.0214s p50=0.0122s p95=0.0135s p99=0.5163s
+[sink] STATS n=150 rate=9.9msg/s lat_avg=0.0183s p50=0.0121s p95=0.0134s p99=0.3200s
+[sink] STATS n=200 rate=9.9msg/s lat_avg=0.0167s p50=0.0120s p95=0.0134s p99=0.3200s
+[sink] STATS n=250 rate=9.9msg/s lat_avg=0.0158s p50=0.0121s p95=0.0134s p99=0.1245s
+[sink] STATS n=300 rate=9.9msg/s lat_avg=0.0152s p50=0.0121s p95=0.0134s p99=0.1245s
+[sink] STATS n=350 rate=9.9msg/s lat_avg=0.0148s p50=0.0121s p95=0.0134s p99=0.0138s
+[sink] STATS n=400 rate=9.9msg/s lat_avg=0.0145s p50=0.0122s p95=0.0135s p99=0.0141s
+[sink] STATS n=450 rate=9.9msg/s lat_avg=0.0143s p50=0.0122s p95=0.0135s p99=0.0140s
+[sink] STATS n=500 rate=9.9msg/s lat_avg=0.0140s p50=0.0121s p95=0.0135s p99=0.0140s
+[sink] STATS n=550 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=600 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=650 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=700 rate=9.9msg/s lat_avg=0.0122s p50=0.0122s p95=0.0135s p99=0.0137s
+[sink] STATS n=750 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=800 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=850 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=900 rate=9.9msg/s lat_avg=0.0122s p50=0.0120s p95=0.0134s p99=0.0136s
+[sink] STATS n=950 rate=9.9msg/s lat_avg=0.0122s p50=0.0120s p95=0.0134s p99=0.0136s
+[sink] STATS n=1000 rate=9.9msg/s lat_avg=0.0122s p50=0.0120s p95=0.0135s p99=0.0136s
+[sink] STATS n=1050 rate=9.9msg/s lat_avg=0.0122s p50=0.0121s p95=0.0135s p99=0.0137s
+[sink] STATS n=1100 rate=9.9msg/s lat_avg=0.0124s p50=0.0120s p95=0.0135s p99=0.0137s

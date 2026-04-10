@@ -19,7 +19,7 @@ spec:
           image: eclipse-mosquitto:2
           ports:
             - containerPort: 1883
-          command: ["mosquitto", "-c", "/dev/null", "-p", "1883", "-v"]
+          command: ["/bin/sh", "-c", "echo 'listener 1883\nallow_anonymous true' > /tmp/mosquitto.conf && mosquitto -c /tmp/mosquitto.conf -v"]
           resources:
             requests:
               cpu: "200m"

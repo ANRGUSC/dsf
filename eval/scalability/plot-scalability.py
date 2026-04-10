@@ -55,7 +55,10 @@ def plot_odag():
     with open(csv_path) as f:
         reader = csv.DictReader(f)
         for row in reader:
-            makespan = float(row["makespan"])
+            try:
+                makespan = float(row["makespan"])
+            except (ValueError, TypeError):
+                continue
             if makespan > 0:
                 data[row["transport"]][int(row["workers"])].append(makespan)
 
@@ -185,8 +188,12 @@ def plot_combined():
         odag_data = defaultdict(lambda: defaultdict(list))
         with open(odag_path) as f:
             for row in csv.DictReader(f):
-                if float(row["makespan"]) > 0:
-                    odag_data[row["transport"]][int(row["workers"])].append(float(row["makespan"]))
+                try:
+                    ms = float(row["makespan"])
+                except (ValueError, TypeError):
+                    continue
+                if ms > 0:
+                    odag_data[row["transport"]][int(row["workers"])].append(ms)
 
         ax = axes[idx]
         for transport in ["p2p", "nfs"]:

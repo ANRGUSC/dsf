@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Experiment 2A: ODAG Scalability — P2P (data-agent) vs NFS (shared volume)
+# Experiment 2A: ODAG Scalability — P2P (data-agent) vs NFS (shared storage)
+#
+# Runs fan-out ODAGs at varying widths with two storage modes:
+#   p2p: normal local disk + data-agent push (default DSF)
+#   nfs: NFS overlay on /data/dsf-outputs (centralized storage bottleneck)
 #
 # Usage: ./eval/scalability/run-odag-scalability.sh [RUNS=5]
 #
 # Prerequisites:
-#   - NFS server deployed: kubectl apply -f eval/scalability/nfs-server.yml
-#   - NFS mounts active: kubectl apply -f eval/scalability/nfs-mount-daemonset.yml
+#   - NFS server: kubectl apply -f eval/scalability/nfs-server.yml
 #   - scalability-eval image built and pushed
-#   - ODAG templates generated and applied:
-#       python3 eval/scalability/gen-odag-templates.py
-#       kubectl apply -f eval/scalability/odag-templates/
+#   - ODAGTemplates applied (use P2P templates for both — storage mode is
+#     controlled by whether NFS overlay is active)
+#   - For NFS mode: ./eval/scalability/setup-nfs-overlay.sh
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -37,7 +40,6 @@ run_template() {
     odag_name=$($DSF odag run "$template" -n "$NS" 2>&1 | grep -oP 'Created run \K\S+')
     echo "[eval] Created: $odag_name"
 
-    # Wait for completion.
     local elapsed=0
     while true; do
         phase=$(kubectl get odag "$odag_name" -n "$NS" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
@@ -58,7 +60,6 @@ run_template() {
     echo "[eval] $odag_name: phase=$phase makespan=${makespan}s"
     echo "$run_num,$transport,$workers,$odag_name,$phase,$makespan" >> "$CSV"
 
-    # Save placement.
     kubectl get pods -n "$NS" -l dsf-odag="$odag_name" -o wide --no-headers 2>/dev/null | \
         awk '{printf "%-40s %s\n", $1, $7}' > "$RESULTS/${odag_name}-placement.txt" 2>/dev/null || true
 
@@ -72,16 +73,39 @@ echo "║  Runs per condition: $RUNS                                "
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
+# ── Phase 1: P2P (normal local disk + data-agent) ──────────────────────
+echo "═══ Phase 1: P2P (local disk) ═══"
+echo "[eval] Ensuring NFS overlay is NOT active..."
+./eval/scalability/teardown-nfs-overlay.sh 2>/dev/null || true
+sleep 5
+
 for n in $WORKER_COUNTS; do
-    for transport in p2p nfs; do
-        template="scale-odag-${transport}-w${n}"
-        echo ""
-        echo "═══ $transport / $n workers ═══"
-        for i in $(seq 1 "$RUNS"); do
-            run_template "$template" "$transport" "$n" "$i"
-        done
+    echo ""
+    echo "── p2p / $n workers ──"
+    for i in $(seq 1 "$RUNS"); do
+        run_template "scale-odag-p2p-w${n}" "p2p" "$n" "$i"
     done
 done
+
+# ── Phase 2: NFS (centralized storage overlay) ─────────────────────────
+echo ""
+echo "═══ Phase 2: NFS (centralized storage) ═══"
+echo "[eval] Activating NFS overlay..."
+./eval/scalability/setup-nfs-overlay.sh
+sleep 10
+
+for n in $WORKER_COUNTS; do
+    echo ""
+    echo "── nfs / $n workers ──"
+    for i in $(seq 1 "$RUNS"); do
+        run_template "scale-odag-p2p-w${n}" "nfs" "$n" "$i"
+    done
+done
+
+# ── Teardown NFS ──
+echo ""
+echo "[eval] Tearing down NFS overlay..."
+./eval/scalability/teardown-nfs-overlay.sh 2>/dev/null || true
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"

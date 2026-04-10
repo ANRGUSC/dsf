@@ -1,0 +1,641 @@
+╔══════════════════════════════════════════════════════╗
+║  Running both scalability experiments sequentially    ║
+╚══════════════════════════════════════════════════════╝
+
+=== Phase 1: ODAG (P2P vs NFS) ===
+╔══════════════════════════════════════════════════════════╗
+║  Experiment 2A: ODAG Scalability — P2P vs NFS            ║
+║  Fan-out widths: 2 4 6 8                           
+║  Runs per condition: 5                                
+╚══════════════════════════════════════════════════════════╝
+
+
+═══ p2p / 2 workers ═══
+
+[eval] ── p2p / 2 workers / run 1 ──
+[eval] Created: scale-odag-p2p-w2-run-005
+[eval] scale-odag-p2p-w2-run-005: phase=Succeeded makespan=10s
+
+[eval] ── p2p / 2 workers / run 2 ──
+[eval] Created: scale-odag-p2p-w2-run-006
+[eval] scale-odag-p2p-w2-run-006: phase=Succeeded makespan=6s
+
+[eval] ── p2p / 2 workers / run 3 ──
+[eval] Created: scale-odag-p2p-w2-run-007
+[eval] scale-odag-p2p-w2-run-007: phase=Succeeded makespan=4s
+
+[eval] ── p2p / 2 workers / run 4 ──
+[eval] Created: scale-odag-p2p-w2-run-008
+[eval] scale-odag-p2p-w2-run-008: phase=Succeeded makespan=6s
+
+[eval] ── p2p / 2 workers / run 5 ──
+[eval] Created: scale-odag-p2p-w2-run-009
+[eval] scale-odag-p2p-w2-run-009: phase=Succeeded makespan=9s
+
+═══ nfs / 2 workers ═══
+
+[eval] ── nfs / 2 workers / run 1 ──
+[eval] Created: scale-odag-nfs-w2-run-001
+[eval] TIMEOUT: scale-odag-nfs-w2-run-001
+[eval] scale-odag-nfs-w2-run-001: phase=Timeout makespan=s
+
+[eval] ── nfs / 2 workers / run 2 ──
+[eval] Created: scale-odag-nfs-w2-run-002
+[eval] TIMEOUT: scale-odag-nfs-w2-run-002
+[eval] scale-odag-nfs-w2-run-002: phase=Timeout makespan=s
+
+[eval] ── nfs / 2 workers / run 3 ──
+[eval] Created: scale-odag-nfs-w2-run-003
+[eval] TIMEOUT: scale-odag-nfs-w2-run-003
+[eval] scale-odag-nfs-w2-run-003: phase=Timeout makespan=s
+
+[eval] ── nfs / 2 workers / run 4 ──
+[eval] Created: scale-odag-nfs-w2-run-004
+[eval] TIMEOUT: scale-odag-nfs-w2-run-004
+[eval] scale-odag-nfs-w2-run-004: phase=Timeout makespan=s
+
+[eval] ── nfs / 2 workers / run 5 ──
+[eval] Created: scale-odag-nfs-w2-run-005
+[eval] TIMEOUT: scale-odag-nfs-w2-run-005
+[eval] scale-odag-nfs-w2-run-005: phase=Timeout makespan=s
+
+═══ p2p / 4 workers ═══
+
+[eval] ── p2p / 4 workers / run 1 ──
+[eval] Created: scale-odag-p2p-w4-run-001
+[eval] scale-odag-p2p-w4-run-001: phase=Succeeded makespan=6s
+
+[eval] ── p2p / 4 workers / run 2 ──
+[eval] Created: scale-odag-p2p-w4-run-002
+[eval] scale-odag-p2p-w4-run-002: phase=Succeeded makespan=7s
+
+[eval] ── p2p / 4 workers / run 3 ──
+[eval] Created: scale-odag-p2p-w4-run-003
+[eval] scale-odag-p2p-w4-run-003: phase=Succeeded makespan=17s
+
+[eval] ── p2p / 4 workers / run 4 ──
+[eval] Created: scale-odag-p2p-w4-run-004
+[eval] scale-odag-p2p-w4-run-004: phase=Succeeded makespan=9s
+
+[eval] ── p2p / 4 workers / run 5 ──
+[eval] Created: scale-odag-p2p-w4-run-005
+[eval] scale-odag-p2p-w4-run-005: phase=Succeeded makespan=7s
+
+═══ nfs / 4 workers ═══
+
+[eval] ── nfs / 4 workers / run 1 ──
+[eval] Created: scale-odag-nfs-w4-run-001
+[eval] TIMEOUT: scale-odag-nfs-w4-run-001
+[eval] scale-odag-nfs-w4-run-001: phase=Timeout makespan=s
+
+[eval] ── nfs / 4 workers / run 2 ──
+[eval] Created: scale-odag-nfs-w4-run-002
+[eval] TIMEOUT: scale-odag-nfs-w4-run-002
+[eval] scale-odag-nfs-w4-run-002: phase=Timeout makespan=s
+
+[eval] ── nfs / 4 workers / run 3 ──
+[eval] Created: scale-odag-nfs-w4-run-003
+[eval] TIMEOUT: scale-odag-nfs-w4-run-003
+[eval] scale-odag-nfs-w4-run-003: phase=Timeout makespan=s
+
+[eval] ── nfs / 4 workers / run 4 ──
+[eval] Created: scale-odag-nfs-w4-run-004
+[eval] TIMEOUT: scale-odag-nfs-w4-run-004
+[eval] scale-odag-nfs-w4-run-004: phase=Timeout makespan=s
+
+[eval] ── nfs / 4 workers / run 5 ──
+[eval] Created: scale-odag-nfs-w4-run-005
+[eval] TIMEOUT: scale-odag-nfs-w4-run-005
+[eval] scale-odag-nfs-w4-run-005: phase=Timeout makespan=s
+
+═══ p2p / 6 workers ═══
+
+[eval] ── p2p / 6 workers / run 1 ──
+[eval] Created: scale-odag-p2p-w6-run-001
+[eval] scale-odag-p2p-w6-run-001: phase=Succeeded makespan=26s
+
+[eval] ── p2p / 6 workers / run 2 ──
+[eval] Created: scale-odag-p2p-w6-run-002
+[eval] scale-odag-p2p-w6-run-002: phase=Succeeded makespan=13s
+
+[eval] ── p2p / 6 workers / run 3 ──
+[eval] Created: scale-odag-p2p-w6-run-003
+[eval] scale-odag-p2p-w6-run-003: phase=Succeeded makespan=24s
+
+[eval] ── p2p / 6 workers / run 4 ──
+[eval] Created: scale-odag-p2p-w6-run-004
+[eval] scale-odag-p2p-w6-run-004: phase=Succeeded makespan=19s
+
+[eval] ── p2p / 6 workers / run 5 ──
+[eval] Created: scale-odag-p2p-w6-run-005
+[eval] scale-odag-p2p-w6-run-005: phase=Succeeded makespan=20s
+
+═══ nfs / 6 workers ═══
+
+[eval] ── nfs / 6 workers / run 1 ──
+[eval] Created: scale-odag-nfs-w6-run-001
+[eval] TIMEOUT: scale-odag-nfs-w6-run-001
+[eval] scale-odag-nfs-w6-run-001: phase=Timeout makespan=s
+
+[eval] ── nfs / 6 workers / run 2 ──
+[eval] Created: scale-odag-nfs-w6-run-002
+[eval] TIMEOUT: scale-odag-nfs-w6-run-002
+[eval] scale-odag-nfs-w6-run-002: phase=Timeout makespan=s
+
+[eval] ── nfs / 6 workers / run 3 ──
+[eval] Created: scale-odag-nfs-w6-run-003
+[eval] TIMEOUT: scale-odag-nfs-w6-run-003
+[eval] scale-odag-nfs-w6-run-003: phase=Timeout makespan=s
+
+[eval] ── nfs / 6 workers / run 4 ──
+[eval] Created: scale-odag-nfs-w6-run-004
+[eval] TIMEOUT: scale-odag-nfs-w6-run-004
+[eval] scale-odag-nfs-w6-run-004: phase=Timeout makespan=s
+
+[eval] ── nfs / 6 workers / run 5 ──
+[eval] Created: scale-odag-nfs-w6-run-005
+[eval] TIMEOUT: scale-odag-nfs-w6-run-005
+[eval] scale-odag-nfs-w6-run-005: phase=Timeout makespan=s
+
+═══ p2p / 8 workers ═══
+
+[eval] ── p2p / 8 workers / run 1 ──
+[eval] Created: scale-odag-p2p-w8-run-001
+[eval] scale-odag-p2p-w8-run-001: phase=Succeeded makespan=15s
+
+[eval] ── p2p / 8 workers / run 2 ──
+[eval] Created: scale-odag-p2p-w8-run-002
+[eval] scale-odag-p2p-w8-run-002: phase=Succeeded makespan=16s
+
+[eval] ── p2p / 8 workers / run 3 ──
+[eval] Created: scale-odag-p2p-w8-run-003
+[eval] scale-odag-p2p-w8-run-003: phase=Succeeded makespan=34s
+
+[eval] ── p2p / 8 workers / run 4 ──
+[eval] Created: scale-odag-p2p-w8-run-004
+[eval] scale-odag-p2p-w8-run-004: phase=Succeeded makespan=36s
+
+[eval] ── p2p / 8 workers / run 5 ──
+[eval] Created: scale-odag-p2p-w8-run-005
+[eval] scale-odag-p2p-w8-run-005: phase=Succeeded makespan=27s
+
+═══ nfs / 8 workers ═══
+
+[eval] ── nfs / 8 workers / run 1 ──
+[eval] Created: scale-odag-nfs-w8-run-001
+[eval] TIMEOUT: scale-odag-nfs-w8-run-001
+[eval] scale-odag-nfs-w8-run-001: phase=Timeout makespan=s
+
+[eval] ── nfs / 8 workers / run 2 ──
+[eval] Created: scale-odag-nfs-w8-run-002
+[eval] TIMEOUT: scale-odag-nfs-w8-run-002
+[eval] scale-odag-nfs-w8-run-002: phase=Timeout makespan=s
+
+[eval] ── nfs / 8 workers / run 3 ──
+[eval] Created: scale-odag-nfs-w8-run-003
+[eval] TIMEOUT: scale-odag-nfs-w8-run-003
+[eval] scale-odag-nfs-w8-run-003: phase=Timeout makespan=s
+
+[eval] ── nfs / 8 workers / run 4 ──
+[eval] Created: scale-odag-nfs-w8-run-004
+[eval] TIMEOUT: scale-odag-nfs-w8-run-004
+[eval] scale-odag-nfs-w8-run-004: phase=Timeout makespan=s
+
+[eval] ── nfs / 8 workers / run 5 ──
+[eval] Created: scale-odag-nfs-w8-run-005
+[eval] TIMEOUT: scale-odag-nfs-w8-run-005
+[eval] scale-odag-nfs-w8-run-005: phase=Timeout makespan=s
+
+╔══════════════════════════════════════════════════════════╗
+║  Experiment Complete                                     ║
+╚══════════════════════════════════════════════════════════╝
+
+Results: eval/scalability/results/odag-scalability.csv
+
+Summary:
+  p2p/2w       mean=7.0s (n=5)
+  p2p/4w       mean=9.2s (n=5)
+  p2p/6w       mean=20.4s (n=5)
+  p2p/8w       mean=25.6s (n=5)
+
+=== Phase 2: CDAG (ZMQ vs MQTT) ===
+╔══════════════════════════════════════════════════════════╗
+║  Experiment 2: Scalability — P2P (ZMQ) vs MQTT           ║
+║  Fan-out widths: 2 4 6 8                           
+║  Instances per condition: 3                      
+║  Duration per instance: 120s                      
+╚══════════════════════════════════════════════════════════╝
+
+
+═══ zmq / 2 workers ═══
+
+[eval] ── zmq / 2 workers / instance 1 ──
+[eval] Created: scale-zmq-w2-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w2-inst-001: throughput=9.9msg/s avg_lat=0.0148s p50=0.0146s p95=0.0158s
+[eval] Placement:
+  scale-zmq-w2-inst-001-sink-0             anrg-6
+  scale-zmq-w2-inst-001-source-0           anrg-3
+  scale-zmq-w2-inst-001-worker-1-0         anrg-3
+  scale-zmq-w2-inst-001-worker-2-0         anrg-5
+cdag.dsf.io "scale-zmq-w2-inst-001" deleted
+
+[eval] ── zmq / 2 workers / instance 2 ──
+[eval] Created: scale-zmq-w2-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w2-inst-001: throughput=9.9msg/s avg_lat=0.0256s p50=0.0283s p95=0.0305s
+[eval] Placement:
+  scale-zmq-w2-inst-001-sink-0             anrg-4
+  scale-zmq-w2-inst-001-source-0           anrg-3
+  scale-zmq-w2-inst-001-worker-1-0         anrg-6
+  scale-zmq-w2-inst-001-worker-2-0         anrg-6
+cdag.dsf.io "scale-zmq-w2-inst-001" deleted
+
+[eval] ── zmq / 2 workers / instance 3 ──
+[eval] Created: scale-zmq-w2-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w2-inst-001: throughput=9.9msg/s avg_lat=0.0124s p50=0.0120s p95=0.0135s
+[eval] Placement:
+  scale-zmq-w2-inst-001-sink-0             anrg-3
+  scale-zmq-w2-inst-001-source-0           anrg-3
+  scale-zmq-w2-inst-001-worker-1-0         anrg-5
+  scale-zmq-w2-inst-001-worker-2-0         anrg-5
+cdag.dsf.io "scale-zmq-w2-inst-001" deleted
+
+═══ mqtt / 2 workers ═══
+
+[eval] ── mqtt / 2 workers / instance 1 ──
+[eval] Created: scale-mqtt-w2-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w2-inst-001: throughput=9.9msg/s avg_lat=0.0243s p50=0.0251s p95=0.0283s
+[eval] Placement:
+  scale-mqtt-w2-inst-001-sink-0            anrg-5
+  scale-mqtt-w2-inst-001-source-0          2m30s
+  scale-mqtt-w2-inst-001-worker-1-0        2m29s
+  scale-mqtt-w2-inst-001-worker-2-0        2m27s
+cdag.dsf.io "scale-mqtt-w2-inst-001" deleted
+
+[eval] ── mqtt / 2 workers / instance 2 ──
+[eval] Created: scale-mqtt-w2-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w2-inst-001: throughput=8.6msg/s avg_lat=0.0156s p50=0.0154s p95=0.0193s
+[eval] Placement:
+  scale-mqtt-w2-inst-001-sink-0            anrg-3
+  scale-mqtt-w2-inst-001-source-0          2m31s
+  scale-mqtt-w2-inst-001-worker-1-0        anrg-4
+  scale-mqtt-w2-inst-001-worker-2-0        2m2s
+cdag.dsf.io "scale-mqtt-w2-inst-001" deleted
+
+[eval] ── mqtt / 2 workers / instance 3 ──
+[eval] Created: scale-mqtt-w2-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w2-inst-001: throughput=9.9msg/s avg_lat=0.0146s p50=0.0139s p95=0.0165s
+[eval] Placement:
+  scale-mqtt-w2-inst-001-sink-0            anrg-4
+  scale-mqtt-w2-inst-001-source-0          2m18s
+  scale-mqtt-w2-inst-001-worker-1-0        2m30s
+  scale-mqtt-w2-inst-001-worker-2-0        2m14s
+cdag.dsf.io "scale-mqtt-w2-inst-001" deleted
+
+═══ zmq / 4 workers ═══
+
+[eval] ── zmq / 4 workers / instance 1 ──
+[eval] Created: scale-zmq-w4-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w4-inst-001: throughput=20.7msg/s avg_lat=0.0138s p50=0.0136s p95=0.0159s
+[eval] Placement:
+  scale-zmq-w4-inst-001-sink-0             anrg-5
+  scale-zmq-w4-inst-001-source-0           anrg-3
+  scale-zmq-w4-inst-001-worker-1-0         anrg-3
+  scale-zmq-w4-inst-001-worker-2-0         anrg-3
+  scale-zmq-w4-inst-001-worker-3-0         anrg-3
+  scale-zmq-w4-inst-001-worker-4-0         anrg-3
+cdag.dsf.io "scale-zmq-w4-inst-001" deleted
+
+[eval] ── zmq / 4 workers / instance 2 ──
+[eval] Created: scale-zmq-w4-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w4-inst-001: throughput=20.6msg/s avg_lat=0.0258s p50=0.0301s p95=0.0338s
+[eval] Placement:
+  scale-zmq-w4-inst-001-sink-0             anrg-6
+  scale-zmq-w4-inst-001-source-0           anrg-3
+  scale-zmq-w4-inst-001-worker-1-0         anrg-3
+  scale-zmq-w4-inst-001-worker-2-0         anrg-6
+  scale-zmq-w4-inst-001-worker-3-0         anrg-6
+  scale-zmq-w4-inst-001-worker-4-0         anrg-6
+cdag.dsf.io "scale-zmq-w4-inst-001" deleted
+
+[eval] ── zmq / 4 workers / instance 3 ──
+[eval] Created: scale-zmq-w4-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w4-inst-001: throughput=19.2msg/s avg_lat=0.0186s p50=0.0188s p95=0.0295s
+[eval] Placement:
+  scale-zmq-w4-inst-001-sink-0             anrg-3
+  scale-zmq-w4-inst-001-source-0           anrg-3
+  scale-zmq-w4-inst-001-worker-1-0         anrg-6
+  scale-zmq-w4-inst-001-worker-2-0         anrg-5
+  scale-zmq-w4-inst-001-worker-3-0         anrg-6
+  scale-zmq-w4-inst-001-worker-4-0         anrg-4
+cdag.dsf.io "scale-zmq-w4-inst-001" deleted
+
+═══ mqtt / 4 workers ═══
+
+[eval] ── mqtt / 4 workers / instance 1 ──
+[eval] Created: scale-mqtt-w4-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w4-inst-001: throughput=12.4msg/s avg_lat=0.0229s p50=0.0212s p95=0.0314s
+[eval] Placement:
+  scale-mqtt-w4-inst-001-sink-0            anrg-3
+  scale-mqtt-w4-inst-001-source-0          2m30s
+  scale-mqtt-w4-inst-001-worker-1-0        2m28s
+  scale-mqtt-w4-inst-001-worker-2-0        2m26s
+  scale-mqtt-w4-inst-001-worker-3-0        2m25s
+  scale-mqtt-w4-inst-001-worker-4-0        2m24s
+cdag.dsf.io "scale-mqtt-w4-inst-001" deleted
+
+[eval] ── mqtt / 4 workers / instance 2 ──
+[eval] Created: scale-mqtt-w4-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w4-inst-001: throughput=17.8msg/s avg_lat=0.0244s p50=0.0225s p95=0.0326s
+[eval] Placement:
+  scale-mqtt-w4-inst-001-sink-0            anrg-3
+  scale-mqtt-w4-inst-001-source-0          2m11s
+  scale-mqtt-w4-inst-001-worker-1-0        2m30s
+  scale-mqtt-w4-inst-001-worker-2-0        2m28s
+  scale-mqtt-w4-inst-001-worker-3-0        2m26s
+  scale-mqtt-w4-inst-001-worker-4-0        2m25s
+cdag.dsf.io "scale-mqtt-w4-inst-001" deleted
+
+[eval] ── mqtt / 4 workers / instance 3 ──
+[eval] Created: scale-mqtt-w4-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w4-inst-001: throughput=11.9msg/s avg_lat=0.0318s p50=0.0322s p95=0.0447s
+[eval] Placement:
+  scale-mqtt-w4-inst-001-sink-0            anrg-3
+  scale-mqtt-w4-inst-001-source-0          2m14s
+  scale-mqtt-w4-inst-001-worker-1-0        2m30s
+  scale-mqtt-w4-inst-001-worker-2-0        anrg-6
+  scale-mqtt-w4-inst-001-worker-3-0        2m25s
+  scale-mqtt-w4-inst-001-worker-4-0        2m23s
+cdag.dsf.io "scale-mqtt-w4-inst-001" deleted
+
+═══ zmq / 6 workers ═══
+
+[eval] ── zmq / 6 workers / instance 1 ──
+[eval] Created: scale-zmq-w6-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w6-inst-001: throughput=31.0msg/s avg_lat=0.0152s p50=0.0117s p95=0.0299s
+[eval] Placement:
+  scale-zmq-w6-inst-001-sink-0             anrg-3
+  scale-zmq-w6-inst-001-source-0           anrg-3
+  scale-zmq-w6-inst-001-worker-1-0         anrg-3
+  scale-zmq-w6-inst-001-worker-2-0         anrg-4
+  scale-zmq-w6-inst-001-worker-3-0         anrg-6
+  scale-zmq-w6-inst-001-worker-4-0         anrg-3
+  scale-zmq-w6-inst-001-worker-5-0         anrg-4
+  scale-zmq-w6-inst-001-worker-6-0         anrg-6
+cdag.dsf.io "scale-zmq-w6-inst-001" deleted
+
+[eval] ── zmq / 6 workers / instance 2 ──
+[eval] Created: scale-zmq-w6-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w6-inst-001: throughput=28.0msg/s avg_lat=0.0206s p50=0.0198s p95=0.0392s
+[eval] Placement:
+  scale-zmq-w6-inst-001-sink-0             anrg-5
+  scale-zmq-w6-inst-001-source-0           anrg-3
+  scale-zmq-w6-inst-001-worker-1-0         anrg-6
+  scale-zmq-w6-inst-001-worker-2-0         anrg-3
+  scale-zmq-w6-inst-001-worker-3-0         anrg-3
+  scale-zmq-w6-inst-001-worker-4-0         anrg-6
+  scale-zmq-w6-inst-001-worker-5-0         anrg-6
+  scale-zmq-w6-inst-001-worker-6-0         anrg-5
+cdag.dsf.io "scale-zmq-w6-inst-001" deleted
+
+[eval] ── zmq / 6 workers / instance 3 ──
+[eval] Created: scale-zmq-w6-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w6-inst-001: throughput=31.0msg/s avg_lat=0.0113s p50=0.0105s p95=0.0153s
+[eval] Placement:
+  scale-zmq-w6-inst-001-sink-0             anrg-3
+  scale-zmq-w6-inst-001-source-0           anrg-3
+  scale-zmq-w6-inst-001-worker-1-0         anrg-5
+  scale-zmq-w6-inst-001-worker-2-0         anrg-3
+  scale-zmq-w6-inst-001-worker-3-0         anrg-3
+  scale-zmq-w6-inst-001-worker-4-0         anrg-5
+  scale-zmq-w6-inst-001-worker-5-0         anrg-5
+  scale-zmq-w6-inst-001-worker-6-0         anrg-3
+cdag.dsf.io "scale-zmq-w6-inst-001" deleted
+
+═══ mqtt / 6 workers ═══
+
+[eval] ── mqtt / 6 workers / instance 1 ──
+[eval] Created: scale-mqtt-w6-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w6-inst-001: throughput=27.7msg/s avg_lat=0.0226s p50=0.0203s p95=0.0283s
+[eval] Placement:
+  scale-mqtt-w6-inst-001-sink-0            anrg-4
+  scale-mqtt-w6-inst-001-source-0          2m30s
+  scale-mqtt-w6-inst-001-worker-1-0        2m29s
+  scale-mqtt-w6-inst-001-worker-2-0        2m27s
+  scale-mqtt-w6-inst-001-worker-3-0        2m25s
+  scale-mqtt-w6-inst-001-worker-4-0        2m23s
+  scale-mqtt-w6-inst-001-worker-5-0        2m23s
+  scale-mqtt-w6-inst-001-worker-6-0        2m22s
+cdag.dsf.io "scale-mqtt-w6-inst-001" deleted
+
+[eval] ── mqtt / 6 workers / instance 2 ──
+[eval] Created: scale-mqtt-w6-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w6-inst-001: throughput=7.3msg/s avg_lat=0.0279s p50=0.0267s p95=0.0456s
+[eval] Placement:
+  scale-mqtt-w6-inst-001-sink-0            anrg-5
+  scale-mqtt-w6-inst-001-source-0          2m30s
+  scale-mqtt-w6-inst-001-worker-1-0        2m3s
+  scale-mqtt-w6-inst-001-worker-2-0        2m13s
+  scale-mqtt-w6-inst-001-worker-3-0        2m10s
+  scale-mqtt-w6-inst-001-worker-4-0        2m7s
+  scale-mqtt-w6-inst-001-worker-5-0        2m13s
+  scale-mqtt-w6-inst-001-worker-6-0        2m10s
+cdag.dsf.io "scale-mqtt-w6-inst-001" deleted
+
+[eval] ── mqtt / 6 workers / instance 3 ──
+[eval] Created: scale-mqtt-w6-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w6-inst-001: throughput=20.7msg/s avg_lat=2.8030s p50=2.2991s p95=8.6124s
+[eval] Placement:
+  scale-mqtt-w6-inst-001-sink-0            anrg-6
+  scale-mqtt-w6-inst-001-source-0          2m30s
+  scale-mqtt-w6-inst-001-worker-1-0        2m24s
+  scale-mqtt-w6-inst-001-worker-2-0        2m12s
+  scale-mqtt-w6-inst-001-worker-3-0        2m9s
+  scale-mqtt-w6-inst-001-worker-4-0        2m6s
+  scale-mqtt-w6-inst-001-worker-5-0        2m2s
+  scale-mqtt-w6-inst-001-worker-6-0        2m14s
+cdag.dsf.io "scale-mqtt-w6-inst-001" deleted
+
+═══ zmq / 8 workers ═══
+
+[eval] ── zmq / 8 workers / instance 1 ──
+[eval] Created: scale-zmq-w8-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w8-inst-001: throughput=36.4msg/s avg_lat=0.0291s p50=0.0253s p95=0.0515s
+[eval] Placement:
+  scale-zmq-w8-inst-001-sink-0             anrg-6
+  scale-zmq-w8-inst-001-source-0           anrg-3
+  scale-zmq-w8-inst-001-worker-1-0         anrg-6
+  scale-zmq-w8-inst-001-worker-2-0         anrg-6
+  scale-zmq-w8-inst-001-worker-3-0         anrg-3
+  scale-zmq-w8-inst-001-worker-4-0         anrg-3
+  scale-zmq-w8-inst-001-worker-5-0         anrg-3
+  scale-zmq-w8-inst-001-worker-6-0         anrg-4
+  scale-zmq-w8-inst-001-worker-7-0         anrg-3
+  scale-zmq-w8-inst-001-worker-8-0         anrg-4
+cdag.dsf.io "scale-zmq-w8-inst-001" deleted
+
+[eval] ── zmq / 8 workers / instance 2 ──
+[eval] Created: scale-zmq-w8-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w8-inst-001: throughput=41.1msg/s avg_lat=0.0155s p50=0.0142s p95=0.0227s
+[eval] Placement:
+  scale-zmq-w8-inst-001-sink-0             anrg-3
+  scale-zmq-w8-inst-001-source-0           anrg-3
+  scale-zmq-w8-inst-001-worker-1-0         anrg-6
+  scale-zmq-w8-inst-001-worker-2-0         anrg-4
+  scale-zmq-w8-inst-001-worker-3-0         anrg-3
+  scale-zmq-w8-inst-001-worker-4-0         anrg-5
+  scale-zmq-w8-inst-001-worker-5-0         anrg-4
+  scale-zmq-w8-inst-001-worker-6-0         anrg-5
+  scale-zmq-w8-inst-001-worker-7-0         anrg-4
+  scale-zmq-w8-inst-001-worker-8-0         anrg-3
+cdag.dsf.io "scale-zmq-w8-inst-001" deleted
+
+[eval] ── zmq / 8 workers / instance 3 ──
+[eval] Created: scale-zmq-w8-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-zmq-w8-inst-001: throughput=40.8msg/s avg_lat=0.0182s p50=0.0128s p95=0.0389s
+[eval] Placement:
+  scale-zmq-w8-inst-001-sink-0             anrg-4
+  scale-zmq-w8-inst-001-source-0           anrg-3
+  scale-zmq-w8-inst-001-worker-1-0         anrg-6
+  scale-zmq-w8-inst-001-worker-2-0         anrg-4
+  scale-zmq-w8-inst-001-worker-3-0         anrg-4
+  scale-zmq-w8-inst-001-worker-4-0         anrg-3
+  scale-zmq-w8-inst-001-worker-5-0         anrg-3
+  scale-zmq-w8-inst-001-worker-6-0         anrg-3
+  scale-zmq-w8-inst-001-worker-7-0         anrg-6
+  scale-zmq-w8-inst-001-worker-8-0         anrg-6
+cdag.dsf.io "scale-zmq-w8-inst-001" deleted
+
+═══ mqtt / 8 workers ═══
+
+[eval] ── mqtt / 8 workers / instance 1 ──
+[eval] Created: scale-mqtt-w8-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w8-inst-001: throughput=17.4msg/s avg_lat=34.2762s p50=33.2860s p95=46.5271s
+[eval] Placement:
+  scale-mqtt-w8-inst-001-sink-0            anrg-6
+  scale-mqtt-w8-inst-001-source-0          2m30s
+  scale-mqtt-w8-inst-001-worker-1-0        2m28s
+  scale-mqtt-w8-inst-001-worker-2-0        anrg-6
+  scale-mqtt-w8-inst-001-worker-3-0        2m24s
+  scale-mqtt-w8-inst-001-worker-4-0        2m22s
+  scale-mqtt-w8-inst-001-worker-5-0        anrg-6
+  scale-mqtt-w8-inst-001-worker-6-0        2m20s
+  scale-mqtt-w8-inst-001-worker-7-0        2m19s
+  scale-mqtt-w8-inst-001-worker-8-0        anrg-6
+cdag.dsf.io "scale-mqtt-w8-inst-001" deleted
+
+[eval] ── mqtt / 8 workers / instance 2 ──
+[eval] Created: scale-mqtt-w8-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w8-inst-001: throughput=18.1msg/s avg_lat=0.3876s p50=0.0251s p95=3.4728s
+[eval] Placement:
+  scale-mqtt-w8-inst-001-sink-0            anrg-3
+  scale-mqtt-w8-inst-001-source-0          2m15s
+  scale-mqtt-w8-inst-001-worker-1-0        2m14s
+  scale-mqtt-w8-inst-001-worker-2-0        2m13s
+  scale-mqtt-w8-inst-001-worker-3-0        2m12s
+  scale-mqtt-w8-inst-001-worker-4-0        2m11s
+  scale-mqtt-w8-inst-001-worker-5-0        2m10s
+  scale-mqtt-w8-inst-001-worker-6-0        2m9s
+  scale-mqtt-w8-inst-001-worker-7-0        2m8s
+  scale-mqtt-w8-inst-001-worker-8-0        2m7s
+cdag.dsf.io "scale-mqtt-w8-inst-001" deleted
+
+[eval] ── mqtt / 8 workers / instance 3 ──
+[eval] Created: scale-mqtt-w8-inst-001
+[eval] Waiting for pods to start...
+[eval] Running for 120s...
+[eval] scale-mqtt-w8-inst-001: throughput=30.8msg/s avg_lat=0.0343s p50=0.0344s p95=0.0604s
+[eval] Placement:
+  scale-mqtt-w8-inst-001-sink-0            anrg-5
+  scale-mqtt-w8-inst-001-source-0          2m30s
+  scale-mqtt-w8-inst-001-worker-1-0        2m12s
+  scale-mqtt-w8-inst-001-worker-2-0        2m8s
+  scale-mqtt-w8-inst-001-worker-3-0        2m4s
+  scale-mqtt-w8-inst-001-worker-4-0        2m
+  scale-mqtt-w8-inst-001-worker-5-0        116s
+  scale-mqtt-w8-inst-001-worker-6-0        112s
+  scale-mqtt-w8-inst-001-worker-7-0        108s
+  scale-mqtt-w8-inst-001-worker-8-0        2m12s
+cdag.dsf.io "scale-mqtt-w8-inst-001" deleted
+
+╔══════════════════════════════════════════════════════════╗
+║  Experiment Complete                                     ║
+╚══════════════════════════════════════════════════════════╝
+
+Results: eval/scalability/results/scalability.csv
+
+Summary:
+  mqtt/2w      throughput=9.5msg/s  avg_lat=0.0182s  (n=3)
+  mqtt/4w      throughput=14.0msg/s  avg_lat=0.0264s  (n=3)
+  mqtt/6w      throughput=18.6msg/s  avg_lat=0.9512s  (n=3)
+  mqtt/8w      throughput=22.1msg/s  avg_lat=11.5660s  (n=3)
+  zmq/2w       throughput=9.9msg/s  avg_lat=0.0176s  (n=3)
+  zmq/4w       throughput=20.2msg/s  avg_lat=0.0194s  (n=3)
+  zmq/6w       throughput=30.0msg/s  avg_lat=0.0157s  (n=3)
+  zmq/8w       throughput=39.4msg/s  avg_lat=0.0209s  (n=3)
+
+To generate plots: python3 eval/scalability/plot-scalability.py
+
+=== Phase 3: Generating plots ===
+=== Experiment 2: Scalability Plots ===
+ODAG (P2P vs NFS):
+Traceback (most recent call last):
+  File "/home/anrg/dsf/eval/scalability/plot-scalability.py", line 261, in <module>
+    plot_odag()
+  File "/home/anrg/dsf/eval/scalability/plot-scalability.py", line 58, in plot_odag
+    makespan = float(row["makespan"])
+               ^^^^^^^^^^^^^^^^^^^^^^
+ValueError: could not convert string to float: ''
+
+╔══════════════════════════════════════════════════════╗
+║  ALL SCALABILITY EXPERIMENTS COMPLETE                 ║
+╚══════════════════════════════════════════════════════╝
+Results:
+  ODAG: eval/scalability/results/odag-scalability.csv
+  CDAG: eval/scalability/results/cdag-scalability.csv
+  Figures: eval/scalability/figures/

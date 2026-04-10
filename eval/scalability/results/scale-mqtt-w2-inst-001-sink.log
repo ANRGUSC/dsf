@@ -1,0 +1,27 @@
+[sink] DSFTask initialized (transport: mqtt)
+[sink] sink: subscribing to all workers (fan-in)
+[sink] STATS n=50 rate=10.5msg/s lat_avg=0.0248s p50=0.0154s p95=0.1006s p99=0.3020s
+[sink] STATS n=100 rate=9.9msg/s lat_avg=0.0203s p50=0.0155s p95=0.0179s p99=0.3020s
+[sink] STATS n=150 rate=9.9msg/s lat_avg=0.0186s p50=0.0154s p95=0.0178s p99=0.1405s
+[sink] STATS n=200 rate=9.9msg/s lat_avg=0.0180s p50=0.0155s p95=0.0179s p99=0.1405s
+[sink] STATS n=250 rate=9.9msg/s lat_avg=0.0174s p50=0.0155s p95=0.0178s p99=0.1006s
+[sink] STATS n=300 rate=9.9msg/s lat_avg=0.0172s p50=0.0156s p95=0.0181s p99=0.1006s
+[sink] STATS n=350 rate=9.9msg/s lat_avg=0.0169s p50=0.0155s p95=0.0179s p99=0.0190s
+[sink] STATS n=400 rate=9.9msg/s lat_avg=0.0167s p50=0.0155s p95=0.0179s p99=0.0190s
+[sink] STATS n=450 rate=9.9msg/s lat_avg=0.0166s p50=0.0155s p95=0.0179s p99=0.0189s
+[sink] STATS n=500 rate=9.9msg/s lat_avg=0.0165s p50=0.0156s p95=0.0181s p99=0.0190s
+[sink] STATS n=550 rate=9.9msg/s lat_avg=0.0156s p50=0.0156s p95=0.0181s p99=0.0189s
+[sink] STATS n=600 rate=9.9msg/s lat_avg=0.0156s p50=0.0156s p95=0.0181s p99=0.0189s
+[sink] STATS n=650 rate=9.9msg/s lat_avg=0.0156s p50=0.0156s p95=0.0181s p99=0.0189s
+[sink] STATS n=700 rate=9.9msg/s lat_avg=0.0155s p50=0.0155s p95=0.0181s p99=0.0189s
+[sink] STATS n=750 rate=8.2msg/s lat_avg=0.0156s p50=0.0156s p95=0.0182s p99=0.0190s
+[sink] STATS n=800 rate=9.9msg/s lat_avg=0.0154s p50=0.0155s p95=0.0179s p99=0.0190s
+[sink] STATS n=850 rate=9.9msg/s lat_avg=0.0153s p50=0.0154s p95=0.0178s p99=0.0190s
+[sink] STATS n=900 rate=9.9msg/s lat_avg=0.0151s p50=0.0152s p95=0.0178s p99=0.0190s
+[sink] STATS n=950 rate=9.9msg/s lat_avg=0.0150s p50=0.0151s p95=0.0177s p99=0.0190s
+[sink] STATS n=1000 rate=9.9msg/s lat_avg=0.0148s p50=0.0149s p95=0.0174s p99=0.0189s
+[sink] STATS n=1050 rate=8.0msg/s lat_avg=0.0146s p50=0.0148s p95=0.0172s p99=0.0189s
+[sink] STATS n=1100 rate=9.9msg/s lat_avg=0.0147s p50=0.0146s p95=0.0173s p99=0.0189s
+[sink] STATS n=1150 rate=9.9msg/s lat_avg=0.0146s p50=0.0144s p95=0.0170s p99=0.0189s
+[sink] STATS n=1200 rate=8.6msg/s lat_avg=0.0147s p50=0.0140s p95=0.0169s p99=0.0208s
+[sink] STATS n=1250 rate=9.9msg/s lat_avg=0.0146s p50=0.0139s p95=0.0165s p99=0.0177s
