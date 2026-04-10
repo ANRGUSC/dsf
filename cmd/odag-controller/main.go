@@ -246,17 +246,30 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 
 	schedulerName, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
 	var assignMap map[string]nodeInfo
+	var predicted []predictedTaskEntry
 	switch schedulerName {
 	case "heft":
 		log.Printf("[odag-ctrl] using HEFT scheduler for %s", key)
-		assignMap = heftAssignTasks(tasks, nodeMap, rtRes, dsRes, bwRes)
+		hr := heftAssignTasks(tasks, nodeMap, rtRes, dsRes, bwRes)
+		assignMap = hr.assignMap
+		// Use HEFT's own schedule directly (avoids recomputation order mismatch).
+		for _, t := range tasks {
+			if entry, ok := hr.schedule[t.Name]; ok {
+				predicted = append(predicted, predictedTaskEntry{
+					Name:     t.Name,
+					Node:     entry.Node,
+					EstStart: entry.EstStart,
+					EstEnd:   entry.EstEnd,
+				})
+			}
+		}
 	default:
 		log.Printf("[odag-ctrl] using random scheduler for %s", key)
 		assignMap = assignTasks(tasks, nodeMap)
+		predicted = computePredictedSchedule(tasks, assignMap, rtRes, dsRes, bwRes)
 	}
 	assignmentCache.Store(key, assignMap)
 
-	predicted := computePredictedSchedule(tasks, assignMap, rtRes, dsRes, bwRes)
 	writePredictedSchedule(dynClient, namespace, odagName, predicted)
 
 	log.Printf("[odag-ctrl] task placement for %s:", key)

@@ -2,27 +2,36 @@
 """
 Generate CDAGTemplate YAML files for scalability evaluation.
 
-Creates templates with varying fan-out widths (N workers) for both
-ZMQ (DSF native P2P) and MQTT (centralized broker) transports.
-
 Topology:  source → worker-1..N → sink
+
+Constraints give each task 2-3 node choices so random scheduler creates
+a natural mix of same-node and cross-node communication across runs.
 
 Usage: python3 eval/scalability/gen-templates.py
 """
 
 import os
+import random
 import yaml
 
 NAMESPACE = "dsf-system"
 IMAGE = "192.168.1.163:5000/scalability-eval:latest"
-NODES = ["anrg-3", "anrg-4", "anrg-5", "anrg-6"]
+SOURCE_NODE = "anrg-3"
+WORKER_CANDIDATE_POOL = ["anrg-3", "anrg-4", "anrg-5", "anrg-6"]
+SINK_CANDIDATES = ["anrg-4", "anrg-5"]
 WORKER_COUNTS = [2, 4, 6, 8]
-MSG_SIZES = [102400]  # 100KB default; can add more
+MSG_SIZES = [102400]  # 100KB
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "templates")
+
+random.seed(42)
+
+
+def pick_worker_constraints(worker_idx: int) -> list:
+    n = random.choice([2, 3])
+    return sorted(random.sample(WORKER_CANDIDATE_POOL, n))
 
 
 def gen_template(n_workers: int, transport: str, msg_size: int) -> dict:
-    """Generate a CDAGTemplate dict for n_workers with given transport."""
     name = f"scale-{transport}-w{n_workers}"
     if msg_size != 102400:
         name += f"-{msg_size // 1024}kb"
@@ -31,29 +40,29 @@ def gen_template(n_workers: int, transport: str, msg_size: int) -> dict:
 
     tasks = []
 
-    # Source task.
+    # Source — pinned to anrg-3.
     tasks.append({
         "name": "source",
         "image": IMAGE,
         "command": ["python", "task.py"],
         "replicas": 1,
         "dependencies": [],
-        "dataRate": f"{msg_size * 5}B/s",  # MSG_RATE=5/s
+        "dataRate": f"{msg_size * 5}B/s",
         "env": [
             {"name": "DSF_EVAL_MSG_SIZE", "value": str(msg_size)},
             {"name": "DSF_EVAL_MSG_RATE", "value": "5"},
             {"name": "DSF_TRANSPORT_PATTERN", "value": transport_pattern},
         ],
         "resources": {"cpu": "200m", "memory": "128Mi"},
-        "constraints": {"nodeNames": [NODES[0]]},
+        "constraints": {"nodeNames": [SOURCE_NODE]},
     })
 
-    # Worker tasks (spread across nodes round-robin).
+    # Workers — 2-3 node choices each.
     worker_deps = []
     for i in range(1, n_workers + 1):
         worker_name = f"worker-{i}"
         worker_deps.append(worker_name)
-        node = NODES[i % len(NODES)]
+        candidates = pick_worker_constraints(i)
         tasks.append({
             "name": worker_name,
             "image": IMAGE,
@@ -66,10 +75,10 @@ def gen_template(n_workers: int, transport: str, msg_size: int) -> dict:
                 {"name": "DSF_TRANSPORT_PATTERN", "value": transport_pattern},
             ],
             "resources": {"cpu": "200m", "memory": "128Mi"},
-            "constraints": {"nodeNames": NODES},
+            "constraints": {"nodeNames": candidates},
         })
 
-    # Sink task.
+    # Sink — 2 choices, never just anrg-3.
     tasks.append({
         "name": "sink",
         "image": IMAGE,
@@ -80,7 +89,7 @@ def gen_template(n_workers: int, transport: str, msg_size: int) -> dict:
             {"name": "DSF_TRANSPORT_PATTERN", "value": transport_pattern},
         ],
         "resources": {"cpu": "300m", "memory": "256Mi"},
-        "constraints": {"nodeNames": NODES},
+        "constraints": {"nodeNames": SINK_CANDIDATES},
     })
 
     return {
@@ -88,7 +97,7 @@ def gen_template(n_workers: int, transport: str, msg_size: int) -> dict:
         "kind": "CDAGTemplate",
         "metadata": {"name": name, "namespace": NAMESPACE},
         "spec": {
-            "description": f"Scalability eval: {transport.upper()} transport, {n_workers} workers, {msg_size // 1024}KB msgs",
+            "description": f"Scalability eval: {transport.upper()}, {n_workers} workers, {msg_size // 1024}KB, 2-3 node choices",
             "scheduler": "random",
             "restartPolicy": "Always",
             "retention": {"maxInstances": 5},
@@ -110,12 +119,16 @@ def main():
                 with open(path, "w") as f:
                     yaml.dump(tmpl, f, default_flow_style=False, sort_keys=False)
 
-                print(f"  Generated: {path}")
+                print(f"  {name}:")
+                print(f"    source: [{SOURCE_NODE}]")
+                for t in tmpl["spec"]["tasks"][1:-1]:
+                    print(f"    {t['name']}: {t['constraints']['nodeNames']}")
+                print(f"    sink: {SINK_CANDIDATES}")
 
     print(f"\n  Total: {len(WORKER_COUNTS) * 2 * len(MSG_SIZES)} templates")
-    print(f"  Apply all: kubectl apply -f {OUTPUT_DIR}/")
+    print(f"  Apply: kubectl apply -f {OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":
-    print("=== Generating scalability evaluation templates ===")
+    print("=== Generating CDAG scalability templates ===")
     main()

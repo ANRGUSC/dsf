@@ -154,9 +154,22 @@ func parseTaskMemBytes(s string) int64 {
 	return q.Value()
 }
 
-func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) map[string]nodeInfo {
+// heftScheduleEntry holds the scheduling decision for a single task.
+type heftScheduleEntry struct {
+	Node     string
+	EstStart float64
+	EstEnd   float64
+}
+
+// heftResult holds both the node assignment map and the predicted schedule.
+type heftResult struct {
+	assignMap map[string]nodeInfo
+	schedule  map[string]heftScheduleEntry
+}
+
+func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) heftResult {
 	if len(tasks) == 0 {
-		return map[string]nodeInfo{}
+		return heftResult{assignMap: map[string]nodeInfo{}, schedule: map[string]heftScheduleEntry{}}
 	}
 
 	taskByName := make(map[string]*taskSpec, len(tasks))
@@ -281,6 +294,7 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 	taskFinish := make(map[string]float64, len(tasks))
 	taskAssigned := make(map[string]string, len(tasks))
 	result := make(map[string]nodeInfo, len(tasks))
+	schedule := make(map[string]heftScheduleEntry, len(tasks))
 
 	for _, name := range sorted {
 		t := taskByName[name]
@@ -356,12 +370,13 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 		taskAssigned[name] = bestNode
 		taskFinish[name] = bestEFT
 		result[name] = nodeMap[bestNode]
+		schedule[name] = heftScheduleEntry{Node: bestNode, EstStart: estFinal, EstEnd: bestEFT}
 
 		log.Printf("[heft] %-20s rank=%.1f -> %-10s EST=%.1fs EFT=%.1fs (cpu=%dm mem=%dMi)",
 			name, rank[name], bestNode, estFinal, bestEFT, taskCPU, taskMem/(1<<20))
 	}
 
-	return result
+	return heftResult{assignMap: result, schedule: schedule}
 }
 
 // computeAvgBandwidth returns the mean bandwidth across all distinct node pairs.

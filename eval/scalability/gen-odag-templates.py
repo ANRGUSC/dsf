@@ -2,40 +2,49 @@
 """
 Generate ODAGTemplate YAML files for scalability evaluation.
 
-Creates templates with varying fan-out widths (N workers) for both
-P2P (file transport / data-agent) and NFS (shared_volume transport).
-
 Topology:  source → worker-1..N → sink
+
+Constraints give each task 2-3 node choices (NOT all, NOT pinned to one).
+Random scheduler picks from the candidates, creating a natural mix of
+same-node (local) and cross-node (network) transfers across runs.
+
+Source is pinned to anrg-3 (fixed reference point).
+Workers get 2-3 random nodes from [anrg-4, anrg-5, anrg-6] — guarantees
+at least some cross-node transfers since source is on anrg-3.
+Sink gets [anrg-4, anrg-5] — always cross-node from source.
 
 Usage: python3 eval/scalability/gen-odag-templates.py
 """
 
 import os
+import random
 import yaml
 
 NAMESPACE = "dsf-system"
 IMAGE = "192.168.1.163:5000/scalability-eval:latest"
 NODES = ["anrg-3", "anrg-4", "anrg-5", "anrg-6"]
+SOURCE_NODE = "anrg-3"
+WORKER_CANDIDATE_POOL = ["anrg-3", "anrg-4", "anrg-5", "anrg-6"]
+SINK_CANDIDATES = ["anrg-4", "anrg-5"]
 WORKER_COUNTS = [2, 4, 6, 8]
 DATA_SIZE = 50_000_000  # 50MB
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "odag-templates")
 
+random.seed(42)  # reproducible constraints
 
-def gen_template(n_workers: int, transport: str) -> dict:
-    """Generate an ODAGTemplate for n_workers with given transport."""
-    name = f"scale-odag-{transport}-w{n_workers}"
 
-    # For NFS, override transport pattern via task env vars.
-    nfs_env = []
-    if transport == "nfs":
-        nfs_env = [
-            {"name": "DSF_TRANSPORT_PATTERN", "value": "shared_volume"},
-            {"name": "DSF_SHARED_DIR", "value": "/shared/dsf-outputs"},
-        ]
+def pick_worker_constraints(worker_idx: int) -> list:
+    """Pick 2-3 random nodes for a worker from the pool."""
+    n = random.choice([2, 3])
+    return sorted(random.sample(WORKER_CANDIDATE_POOL, n))
+
+
+def gen_template(n_workers: int) -> dict:
+    name = f"scale-odag-p2p-w{n_workers}"
 
     tasks = []
 
-    # Source task — pinned to anrg-3.
+    # Source — pinned to anrg-3.
     tasks.append({
         "name": "source",
         "image": IMAGE,
@@ -43,17 +52,17 @@ def gen_template(n_workers: int, transport: str) -> dict:
         "dependencies": [],
         "dataSize": f"{DATA_SIZE}",
         "runtime": 2,
-        "env": [{"name": "DSF_EVAL_DATA_SIZE", "value": str(DATA_SIZE)}] + nfs_env,
+        "env": [{"name": "DSF_EVAL_DATA_SIZE", "value": str(DATA_SIZE)}],
         "resources": {"cpu": "300m", "memory": "256Mi"},
-        "constraints": {"nodeNames": [NODES[0]]},
+        "constraints": {"nodeNames": [SOURCE_NODE]},
     })
 
-    # Worker tasks — spread across nodes round-robin.
+    # Workers — each gets 2-3 node choices.
     worker_names = []
     for i in range(1, n_workers + 1):
         wname = f"worker-{i}"
         worker_names.append(wname)
-        node = NODES[i % len(NODES)]
+        candidates = pick_worker_constraints(i)
         tasks.append({
             "name": wname,
             "image": IMAGE,
@@ -61,12 +70,12 @@ def gen_template(n_workers: int, transport: str) -> dict:
             "dependencies": ["source"],
             "dataSize": f"{DATA_SIZE}",
             "runtime": 2,
-            "env": [{"name": "DSF_EVAL_DATA_SIZE", "value": str(DATA_SIZE)}] + nfs_env,
+            "env": [{"name": "DSF_EVAL_DATA_SIZE", "value": str(DATA_SIZE)}],
             "resources": {"cpu": "300m", "memory": "256Mi"},
-            "constraints": {"nodeNames": NODES},
+            "constraints": {"nodeNames": candidates},
         })
 
-    # Sink task.
+    # Sink — 2 candidates, never just anrg-3.
     tasks.append({
         "name": "sink",
         "image": IMAGE,
@@ -74,9 +83,8 @@ def gen_template(n_workers: int, transport: str) -> dict:
         "dependencies": worker_names,
         "dataSize": "0",
         "runtime": 1,
-        "env": nfs_env,
         "resources": {"cpu": "300m", "memory": "512Mi"},
-        "constraints": {"nodeNames": NODES},
+        "constraints": {"nodeNames": SINK_CANDIDATES},
     })
 
     return {
@@ -84,11 +92,11 @@ def gen_template(n_workers: int, transport: str) -> dict:
         "kind": "ODAGTemplate",
         "metadata": {"name": name, "namespace": NAMESPACE},
         "spec": {
-            "description": f"Scalability eval: {transport.upper()} transport, {n_workers} workers, {DATA_SIZE // 1_000_000}MB per task",
+            "description": f"Scalability eval: {n_workers} workers, {DATA_SIZE // 1_000_000}MB, 2-3 node choices per worker",
             "scheduler": "random",
             "profiling": {"enabled": False},
             "defaults": {"runtime": 2, "dataSize": f"{DATA_SIZE}"},
-            "retention": {"maxRuns": 10},
+            "retention": {"maxRuns": 15},
             "tasks": tasks,
         },
     }
@@ -97,19 +105,22 @@ def gen_template(n_workers: int, transport: str) -> dict:
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    for transport in ["p2p", "nfs"]:
-        for n_workers in WORKER_COUNTS:
-            tmpl = gen_template(n_workers, transport)
-            name = tmpl["metadata"]["name"]
-            path = os.path.join(OUTPUT_DIR, f"{name}.yml")
+    for n_workers in WORKER_COUNTS:
+        tmpl = gen_template(n_workers)
+        name = tmpl["metadata"]["name"]
+        path = os.path.join(OUTPUT_DIR, f"{name}.yml")
 
-            with open(path, "w") as f:
-                yaml.dump(tmpl, f, default_flow_style=False, sort_keys=False)
+        with open(path, "w") as f:
+            yaml.dump(tmpl, f, default_flow_style=False, sort_keys=False)
 
-            print(f"  Generated: {path}")
+        print(f"  {name}:")
+        print(f"    source: [{SOURCE_NODE}]")
+        for t in tmpl["spec"]["tasks"][1:-1]:
+            print(f"    {t['name']}: {t['constraints']['nodeNames']}")
+        print(f"    sink: {SINK_CANDIDATES}")
 
-    print(f"\n  Total: {len(WORKER_COUNTS) * 2} templates")
-    print(f"  Apply all: kubectl apply -f {OUTPUT_DIR}/")
+    print(f"\n  Total: {len(WORKER_COUNTS)} templates")
+    print(f"  Apply: kubectl apply -f {OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":
