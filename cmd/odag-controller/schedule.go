@@ -17,10 +17,8 @@ type predictedTaskEntry struct {
 }
 
 // computePredictedSchedule computes estimated start/end times for each task
-// given a fixed node assignment. Processes tasks in topological order.
-//
-// Communication cost: dataSize(dep) / heftBandwidth for cross-node, 0 for same-node.
-// Node contention: if two tasks share a node, the later one waits for the earlier.
+// given a fixed node assignment. Uses resource-aware parallel execution:
+// independent tasks on the same node can overlap if resources allow.
 func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) []predictedTaskEntry {
 	taskByName := make(map[string]*taskSpec, len(tasks))
 	for i := range tasks {
@@ -49,12 +47,22 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 		return heftDefaultBandwidth
 	}
 
-	nodeAvail := make(map[string]float64)
+	// Build per-node resource timelines.
+	timelines := make(map[string]*nodeTimeline)
+	for _, ni := range assignMap {
+		if _, ok := timelines[ni.name]; !ok {
+			timelines[ni.name] = &nodeTimeline{
+				totalCPU: ni.cpuMillis,
+				totalMem: ni.memBytes,
+			}
+		}
+	}
+
 	taskFinish := make(map[string]float64)
 	scheduled := make(map[string]bool)
 	result := make([]predictedTaskEntry, 0, len(tasks))
 
-	// Iterate until all tasks are scheduled (topological order via repeated passes).
+	// Topological order via repeated passes.
 	for len(result) < len(tasks) {
 		progress := false
 		for _, t := range tasks {
@@ -73,8 +81,10 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 			}
 
 			nodeName := assignMap[t.Name].name
-			est := nodeAvail[nodeName]
+			tl := timelines[nodeName]
 
+			// Compute depsReady: when all deps finish + comm cost.
+			depsReady := 0.0
 			for _, dep := range t.Dependencies {
 				depFinish := taskFinish[dep]
 				depNode := assignMap[dep].name
@@ -84,13 +94,19 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 					bw := resolveBandwidth(depNode, nodeName)
 					commCost = float64(bytes) / bw
 				}
-				if ready := depFinish + commCost; ready > est {
-					est = ready
+				if ready := depFinish + commCost; ready > depsReady {
+					depsReady = ready
 				}
 			}
 
-			eft := est + resolveRuntime(t.Name, nodeName)
-			nodeAvail[nodeName] = eft
+			// Find earliest start with available resources.
+			taskCPU := parseTaskCPUMillis(t.CPU)
+			taskMem := parseTaskMemBytes(t.Memory)
+			runtime := resolveRuntime(t.Name, nodeName)
+			est := tl.earliestStart(taskCPU, taskMem, runtime, depsReady)
+			eft := est + runtime
+
+			tl.commit(t.Name, est, eft, taskCPU, taskMem)
 			taskFinish[t.Name] = eft
 			scheduled[t.Name] = true
 			progress = true
@@ -102,7 +118,7 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 			})
 		}
 		if !progress {
-			break // cycle or unresolvable deps — stop to avoid infinite loop
+			break
 		}
 	}
 	return result

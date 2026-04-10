@@ -44,8 +44,10 @@ const (
 // nodeInfo holds both the node name and its internal IP (needed for cross-node
 // data fetches via the data-agent DaemonSet).
 type nodeInfo struct {
-	name string
-	ip   string
+	name      string
+	ip        string
+	cpuMillis int64 // allocatable CPU in millicores (e.g. 4000 = 4 cores)
+	memBytes  int64 // allocatable memory in bytes
 }
 
 // assignmentCache stores task→nodeInfo assignments keyed by "namespace/odagName".
@@ -547,7 +549,16 @@ func getNodeInfoMap(client *kubernetes.Clientset) (map[string]nodeInfo, error) {
 				break
 			}
 		}
-		result[n.Name] = nodeInfo{name: n.Name, ip: ip}
+		// Read allocatable resources for resource-aware scheduling.
+		cpuMillis := int64(0)
+		memBytes := int64(0)
+		if cpu, ok := n.Status.Allocatable[corev1.ResourceCPU]; ok {
+			cpuMillis = cpu.MilliValue()
+		}
+		if mem, ok := n.Status.Allocatable[corev1.ResourceMemory]; ok {
+			memBytes = mem.Value()
+		}
+		result[n.Name] = nodeInfo{name: n.Name, ip: ip, cpuMillis: cpuMillis, memBytes: memBytes}
 	}
 	return result, nil
 }
@@ -1079,6 +1090,11 @@ func parseResources(cpu, memory string) corev1.ResourceRequirements {
 		r.Limits[corev1.ResourceMemory] = q
 	}
 	return r
+}
+
+// parseResourceQuantity parses a k8s resource quantity string like "500m" or "256Mi".
+func parseResourceQuantity(s string) (resource.Quantity, error) {
+	return resource.ParseQuantity(s)
 }
 
 func computeMakespan(pods []corev1.Pod) float64 {
