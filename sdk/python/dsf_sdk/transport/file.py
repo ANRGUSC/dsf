@@ -132,7 +132,7 @@ class FileTransport:
                     flush=True,
                 )
                 continue
-            successors.append({"name": succ, "host": succ_host})
+            successors.append({"name": succ, "host": succ_host, "node": succ_node})
 
         # 3. Hand off to data-agent (responds 200 immediately, pushes in background).
         self._request_push(successors)

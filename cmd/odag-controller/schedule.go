@@ -16,10 +16,22 @@ type predictedTaskEntry struct {
 	EstEnd   float64 `json:"estEnd"`
 }
 
+type predictedFlowEntry struct {
+	FromTask string  `json:"fromTask"`
+	ToTask   string  `json:"toTask"`
+	SrcNode  string  `json:"srcNode"`
+	DstNode  string  `json:"dstNode"`
+	Start    float64 `json:"start"`
+	End      float64 `json:"end"`
+	DataSize int64   `json:"dataSize"`
+}
+
 // computePredictedSchedule computes estimated start/end times for each task
 // given a fixed node assignment. Uses resource-aware parallel execution:
 // independent tasks on the same node can overlap if resources allow.
-func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) []predictedTaskEntry {
+// Also returns naive per-edge flow timings (no contention model here —
+// contention-aware flows only come from the HEFT scheduler).
+func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) ([]predictedTaskEntry, []predictedFlowEntry) {
 	taskByName := make(map[string]*taskSpec, len(tasks))
 	for i := range tasks {
 		taskByName[tasks[i].Name] = &tasks[i]
@@ -61,6 +73,7 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 	taskFinish := make(map[string]float64)
 	scheduled := make(map[string]bool)
 	result := make([]predictedTaskEntry, 0, len(tasks))
+	flows := make([]predictedFlowEntry, 0)
 
 	// Topological order via repeated passes.
 	for len(result) < len(tasks) {
@@ -92,7 +105,20 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 				if depNode != nodeName {
 					bytes := resolveDataSizeBytes(dep, depNode)
 					bw := resolveBandwidth(depNode, nodeName)
-					commCost = float64(bytes) / bw
+					if bw > 0 {
+						commCost = float64(bytes) / bw
+					}
+					if bytes > 0 {
+						flows = append(flows, predictedFlowEntry{
+							FromTask: dep,
+							ToTask:   t.Name,
+							SrcNode:  depNode,
+							DstNode:  nodeName,
+							Start:    depFinish,
+							End:      depFinish + commCost,
+							DataSize: bytes,
+						})
+					}
 				}
 				if ready := depFinish + commCost; ready > depsReady {
 					depsReady = ready
@@ -121,13 +147,17 @@ func computePredictedSchedule(tasks []taskSpec, assignMap map[string]nodeInfo, r
 			break
 		}
 	}
-	return result
+	return result, flows
 }
 
-func writePredictedSchedule(dynClient dynamic.Interface, namespace, odagName string, predicted []predictedTaskEntry) {
-	patch := map[string]interface{}{
-		"status": map[string]interface{}{
-			"predictedTasks": predicted,
+func writePredictedSchedule(dynClient dynamic.Interface, namespace, odagName string, predicted []predictedTaskEntry, flows []predictedFlowEntry) {
+	if flows == nil {
+		flows = []predictedFlowEntry{}
+	}
+	patch := map[string]any{
+		"status": map[string]any{
+			"predictedTasks":        predicted,
+			"predictedNetworkFlows": flows,
 		},
 	}
 	data, _ := json.Marshal(patch)

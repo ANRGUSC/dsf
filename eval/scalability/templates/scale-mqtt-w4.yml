@@ -4,7 +4,7 @@ metadata:
   name: scale-mqtt-w4
   namespace: dsf-system
 spec:
-  description: 'Scalability eval: MQTT transport, 4 workers, 100KB msgs'
+  description: 'Scalability eval: MQTT, 4 workers, 100KB, forced cross-node'
   scheduler: random
   restartPolicy: Always
   retention:
@@ -49,11 +49,8 @@ spec:
       cpu: 200m
       memory: 128Mi
     constraints:
-      nodeNames: &id001
-      - anrg-3
+      nodeNames:
       - anrg-4
-      - anrg-5
-      - anrg-6
   - name: worker-2
     image: 192.168.1.163:5000/scalability-eval:latest
     command:
@@ -72,7 +69,8 @@ spec:
       cpu: 200m
       memory: 128Mi
     constraints:
-      nodeNames: *id001
+      nodeNames:
+      - anrg-5
   - name: worker-3
     image: 192.168.1.163:5000/scalability-eval:latest
     command:
@@ -91,7 +89,8 @@ spec:
       cpu: 200m
       memory: 128Mi
     constraints:
-      nodeNames: *id001
+      nodeNames:
+      - anrg-6
   - name: worker-4
     image: 192.168.1.163:5000/scalability-eval:latest
     command:
@@ -110,7 +109,8 @@ spec:
       cpu: 200m
       memory: 128Mi
     constraints:
-      nodeNames: *id001
+      nodeNames:
+      - anrg-4
   - name: sink
     image: 192.168.1.163:5000/scalability-eval:latest
     command:
@@ -129,4 +129,5 @@ spec:
       cpu: 300m
       memory: 256Mi
     constraints:
-      nodeNames: *id001
+      nodeNames:
+      - anrg-4

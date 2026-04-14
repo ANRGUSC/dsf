@@ -5,9 +5,16 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import { api } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
 import DAGGraph from '@/components/DAGGraph'
-import GanttChart from '@/components/GanttChart'
+import UnifiedGantt from '@/components/UnifiedGantt'
+import UtilizationView from '@/components/UtilizationView'
 
-type Tab = 'graph' | 'tasks' | 'history' | 'schedule'
+type Tab = 'graph' | 'tasks' | 'history' | 'schedule' | 'utilization' | 'spec'
+
+function fmtTime(s?: string): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString()
+}
 
 export default function ODAGDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
@@ -44,14 +51,30 @@ export default function ODAGDetail() {
       <div className="flex items-center gap-4 mb-6">
         <h1 className="text-lg font-semibold">{dag.name}</h1>
         <StatusBadge phase={dag.phase} />
-{dag.makespan != null && (
-          <span className="text-on-faint text-sm">makespan: {dag.makespan.toFixed(1)}s</span>
-        )}
+{(() => {
+          const predMs = dag.predictedTasks && dag.predictedTasks.length > 0
+            ? Math.max(...dag.predictedTasks.map(p => p.estEnd))
+            : null
+          const actMs = dag.makespan ?? null
+          const diff = predMs != null && actMs != null ? actMs - predMs : null
+          const diffPct = diff != null && predMs! > 0 ? (diff / predMs!) * 100 : null
+          return (
+            <span className="text-on-faint text-sm flex items-center gap-3">
+              <span>predicted: <span className="text-on-secondary">{predMs != null ? `${predMs.toFixed(1)}s` : '—'}</span></span>
+              <span>actual: <span className="text-on-secondary">{actMs != null ? `${actMs.toFixed(1)}s` : '—'}</span></span>
+              {diff != null && (
+                <span className={diff > 0 ? 'text-red-500 dark:text-red-400' : diff < 0 ? 'text-green-600 dark:text-green-400' : ''}>
+                  Δ {diff > 0 ? '+' : ''}{diff.toFixed(1)}s{diffPct != null ? ` (${diff > 0 ? '+' : ''}${diffPct.toFixed(0)}%)` : ''}
+                </span>
+              )}
+            </span>
+          )
+        })()}
       </div>
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-line mb-6 text-sm">
-        {(['graph', 'tasks', 'schedule', 'history'] as Tab[]).map(t => (
+        {(['graph', 'tasks', 'schedule', 'utilization', 'spec', 'history'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -66,7 +89,7 @@ export default function ODAGDetail() {
       {tab === 'graph' && <DAGGraph dag={dag} />}
 
       {/* Schedule tab */}
-      {tab === 'schedule' && <GanttChart dag={dag} />}
+      {tab === 'schedule' && <UnifiedGantt dag={dag} />}
 
       {/* Tasks tab */}
       {tab === 'tasks' && (() => {
@@ -136,6 +159,48 @@ export default function ODAGDetail() {
         )
       })()}
 
+      {/* Utilization tab */}
+      {tab === 'utilization' && <UtilizationView dag={dag} />}
+
+      {/* Spec tab */}
+      {tab === 'spec' && (
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="text-left text-on-muted border-b border-line">
+              <th className="pb-2 pr-4">Task</th>
+              <th className="pb-2 pr-4">Image</th>
+              <th className="pb-2 pr-4">CPU</th>
+              <th className="pb-2 pr-4">Memory</th>
+              <th className="pb-2 pr-4">Runtime</th>
+              <th className="pb-2 pr-4">Data Size</th>
+              <th className="pb-2 pr-4">Dependencies</th>
+              <th className="pb-2">Allowed Nodes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {dag.spec.tasks.map(t => {
+              const allowed = t.constraints?.nodeNames ?? []
+              return (
+                <tr key={t.name} className="border-b border-line-soft">
+                  <td className="py-2 pr-4 font-medium">{t.name}</td>
+                  <td className="py-2 pr-4 text-on-muted text-xs font-mono">{t.image}</td>
+                  <td className="py-2 pr-4 text-on-muted">{t.resources?.cpu ?? '—'}</td>
+                  <td className="py-2 pr-4 text-on-muted">{t.resources?.memory ?? '—'}</td>
+                  <td className="py-2 pr-4 text-on-muted">{t.runtime != null ? `${t.runtime}s` : '—'}</td>
+                  <td className="py-2 pr-4 text-on-muted">{t.dataSize ?? '—'}</td>
+                  <td className="py-2 pr-4 text-on-faint text-xs">
+                    {t.dependencies.length ? t.dependencies.join(', ') : '—'}
+                  </td>
+                  <td className="py-2 text-on-faint text-xs">
+                    {allowed.length > 0 ? allowed.join(', ') : <span className="text-on-faint">any</span>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+
       {/* History tab */}
       {tab === 'history' && (
         <div>
@@ -169,7 +234,7 @@ export default function ODAGDetail() {
                       <td className="py-2 pr-4 text-on-muted">
                         {h.makespan != null ? `${h.makespan.toFixed(1)}s` : '—'}
                       </td>
-                      <td className="py-2 text-on-faint text-xs">{new Date(h.startTime).toLocaleString()}</td>
+                      <td className="py-2 text-on-faint text-xs">{fmtTime(h.startTime)}</td>
                     </tr>
                   ))}
                 </tbody>

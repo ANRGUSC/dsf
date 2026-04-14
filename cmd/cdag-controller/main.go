@@ -599,11 +599,10 @@ func ensurePod(client *kubernetes.Clientset, namespace, podName, cdagName string
 				Args:            task.Args,
 				Env:             envVars,
 				Resources:       resources,
-				Ports: []corev1.ContainerPort{{
-					Name:          "zmq",
-					ContainerPort: zmqPort,
-					Protocol:      corev1.ProtocolTCP,
-				}},
+				Ports: []corev1.ContainerPort{
+					{Name: "zmq", ContainerPort: zmqPort, Protocol: corev1.ProtocolTCP},
+					{Name: "metrics", ContainerPort: 8090, Protocol: corev1.ProtocolTCP},
+				},
 			}},
 		},
 	}

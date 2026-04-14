@@ -1,15 +1,20 @@
-import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { useParams, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, TemplateRun } from '@/api/client'
+import { api, TemplateRun, TemplateHistoryEntry } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
 import TemplateGraph from '@/components/TemplateGraph'
+import MakespanHistogram from '@/components/MakespanHistogram'
 
-type Tab = 'graph' | 'tasks' | 'runs' | 'profile' | 'spec'
+type Tab = 'graph' | 'tasks' | 'runs' | 'stats' | 'profile' | 'spec'
+const VALID_TABS: Tab[] = ['graph', 'tasks', 'runs', 'stats', 'profile', 'spec']
 
 export default function TemplateDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
-  const [tab, setTab] = useState<Tab>('graph')
+  const { hash } = useLocation()
+  const hashTab = hash.replace('#', '') as Tab
+  const initialTab: Tab = VALID_TABS.includes(hashTab) ? hashTab : 'graph'
+  const [tab, setTab] = useState<Tab>(initialTab)
   const queryClient = useQueryClient()
 
   const { data: template, isLoading, error } = useQuery({
@@ -22,6 +27,12 @@ export default function TemplateDetail() {
     queryKey: ['template-runs', namespace, name],
     queryFn: () => api.getTemplateRuns(namespace!, name!),
     enabled: !!namespace && !!name,
+  })
+
+  const { data: history } = useQuery({
+    queryKey: ['template-history', namespace, name],
+    queryFn: () => api.getTemplateHistory(namespace!, name!),
+    enabled: !!namespace && !!name && tab === 'stats',
   })
 
   const runMutation = useMutation({
@@ -41,6 +52,7 @@ export default function TemplateDetail() {
     { key: 'graph', label: 'Graph' },
     { key: 'tasks', label: 'Tasks' },
     { key: 'runs', label: `Runs (${template.runCount})` },
+    { key: 'stats', label: 'Stats' },
     { key: 'profile', label: 'Profile' },
     { key: 'spec', label: 'Spec' },
   ]
@@ -111,6 +123,7 @@ export default function TemplateDetail() {
       {tab === 'graph' && <TemplateGraph tasks={template.spec.tasks} type="odag" />}
       {tab === 'tasks' && <TasksTab spec={template.spec} />}
       {tab === 'runs' && <RunsTab runs={runs ?? []} namespace={namespace!} />}
+      {tab === 'stats' && <StatsTab history={history ?? []} />}
       {tab === 'profile' && <ProfileTab profileSummary={template.profileSummary} />}
       {tab === 'spec' && <SpecTab spec={template.spec} />}
     </div>
@@ -148,44 +161,173 @@ function TasksTab({ spec }: { spec: { tasks: Array<{ name: string; image: string
   )
 }
 
+/* ---------- Stats Tab ---------- */
+
+function StatsTab({ history }: { history: TemplateHistoryEntry[] }) {
+  if (history.length === 0) {
+    return <p className="text-on-faint">No completed runs yet.</p>
+  }
+  const ms = history.map(h => h.makespan).filter(x => x > 0).sort((a, b) => a - b)
+  const n = ms.length
+  const mean = ms.reduce((a, b) => a + b, 0) / n
+  const median = n % 2 ? ms[(n - 1) / 2] : (ms[n / 2 - 1] + ms[n / 2]) / 2
+  const min = ms[0]
+  const max = ms[n - 1]
+  const variance = ms.reduce((s, x) => s + (x - mean) ** 2, 0) / n
+  const stdev = Math.sqrt(variance)
+  const p95 = ms[Math.min(n - 1, Math.floor(0.95 * n))]
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-3 md:grid-cols-6 gap-4 text-sm">
+        <Stat label="Runs" value={String(n)} />
+        <Stat label="Mean" value={`${mean.toFixed(1)}s`} />
+        <Stat label="Median" value={`${median.toFixed(1)}s`} />
+        <Stat label="Min" value={`${min.toFixed(1)}s`} />
+        <Stat label="Max" value={`${max.toFixed(1)}s`} />
+        <Stat label="P95" value={`${p95.toFixed(1)}s`} />
+      </div>
+      <div>
+        <div className="text-xs text-on-faint mb-2">Makespan distribution (stdev {stdev.toFixed(2)}s)</div>
+        <MakespanHistogram values={ms} />
+      </div>
+      <div>
+        <div className="text-xs text-on-faint mb-2">Makespan trend (over run order)</div>
+        <MakespanTrend history={history} />
+      </div>
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-surface-alt border border-line rounded p-2">
+      <div className="text-xs text-on-faint">{label}</div>
+      <div className="text-on font-mono">{value}</div>
+    </div>
+  )
+}
+
+function MakespanTrend({ history }: { history: TemplateHistoryEntry[] }) {
+  if (history.length === 0) return null
+  const values = history.map(h => h.makespan)
+  const maxV = Math.max(...values, 1)
+  const W = 720, H = 140, ML = 40, MR = 10, MT = 10, MB = 24
+  const innerW = W - ML - MR
+  const innerH = H - MT - MB
+  const xs = (i: number) => ML + (history.length <= 1 ? innerW / 2 : (i / (history.length - 1)) * innerW)
+  const ys = (v: number) => MT + innerH - (v / maxV) * innerH
+  const points = history.map((h, i) => `${xs(i)},${ys(h.makespan)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+      <line x1={ML} y1={MT + innerH} x2={ML + innerW} y2={MT + innerH} stroke="#9ca3af" strokeOpacity={0.4} />
+      <line x1={ML} y1={MT} x2={ML} y2={MT + innerH} stroke="#9ca3af" strokeOpacity={0.4} />
+      <polyline points={points} fill="none" stroke="#60a5fa" strokeWidth={1.5} />
+      {history.map((h, i) => (
+        <circle key={i} cx={xs(i)} cy={ys(h.makespan)} r={3} fill="#60a5fa">
+          <title>{`${h.name}: ${h.makespan.toFixed(1)}s`}</title>
+        </circle>
+      ))}
+      <text x={ML - 4} y={ys(maxV) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">{maxV.toFixed(0)}s</text>
+      <text x={ML - 4} y={ys(0) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">0</text>
+      <text x={ML} y={H - 6} fontSize={10} fill="#9ca3af">run 1</text>
+      <text x={ML + innerW} y={H - 6} textAnchor="end" fontSize={10} fill="#9ca3af">run {history.length}</text>
+    </svg>
+  )
+}
+
 /* ---------- Runs Tab ---------- */
 
+type RunSortKey = 'name' | 'run' | 'phase' | 'makespan' | 'age'
+type SortDir = 'asc' | 'desc'
+
 function RunsTab({ runs, namespace }: { runs: TemplateRun[]; namespace: string }) {
+  const [query, setQuery] = useState('')
+  const [sortKey, setSortKey] = useState<RunSortKey>('age')
+  const [sortDir, setSortDir] = useState<SortDir>('asc') // asc on age = newest first
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const filtered = q
+      ? runs.filter(r =>
+          r.name.toLowerCase().includes(q) ||
+          String(r.run).includes(q) ||
+          r.phase.toLowerCase().includes(q))
+      : [...runs]
+    const cmp = (a: TemplateRun, b: TemplateRun): number => {
+      switch (sortKey) {
+        case 'name':     return a.name.localeCompare(b.name)
+        case 'run':      return Number(a.run) - Number(b.run)
+        case 'phase':    return a.phase.localeCompare(b.phase)
+        case 'makespan': return (a.makespan ?? Infinity) - (b.makespan ?? Infinity)
+        case 'age':      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      }
+    }
+    filtered.sort(cmp)
+    if (sortDir === 'desc') filtered.reverse()
+    return filtered
+  }, [runs, query, sortKey, sortDir])
+
+  function toggleSort(k: RunSortKey) {
+    if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(k); setSortDir('asc') }
+  }
+
   if (runs.length === 0) {
     return <p className="text-on-faint">No runs yet. Click "New Run" to create one.</p>
   }
+
   return (
-    <table className="w-full text-sm border-collapse">
-      <thead>
-        <tr className="text-left text-on-muted border-b border-line">
-          <th className="pb-2 pr-4">Name</th>
-          <th className="pb-2 pr-4">Run</th>
-          <th className="pb-2 pr-4">Phase</th>
-          <th className="pb-2 pr-4">Makespan</th>
-          <th className="pb-2">Age</th>
-        </tr>
-      </thead>
-      <tbody>
-        {runs.map(r => (
-          <tr key={r.name} className="border-b border-line-soft hover:bg-surface-alt">
-            <td className="py-2 pr-4">
-              <Link
-                to={`/odags/${namespace}/${r.name}`}
-                className="text-accent hover:text-accent-hover"
-              >
-                {r.name}
-              </Link>
-            </td>
-            <td className="py-2 pr-4 text-on-muted">#{r.run}</td>
-            <td className="py-2 pr-4"><StatusBadge phase={r.phase} /></td>
-            <td className="py-2 pr-4 text-on-muted">
-              {r.makespan != null && r.makespan > 0 ? `${r.makespan.toFixed(1)}s` : '—'}
-            </td>
-            <td className="py-2 text-on-faint">{formatAge(r.createdAt)}</td>
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs text-on-faint">{visible.length} of {runs.length}</div>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Filter by name, run #, phase…"
+          className="px-3 py-1 text-sm bg-surface-alt border border-line rounded w-64 focus:outline-none focus:border-accent"
+        />
+      </div>
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="text-left text-on-muted border-b border-line">
+            <RunSortHeader label="Name"     k="name"     sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <RunSortHeader label="Run"      k="run"      sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <RunSortHeader label="Phase"    k="phase"    sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <RunSortHeader label="Makespan" k="makespan" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <RunSortHeader label="Age"      k="age"      sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {visible.map(r => (
+            <tr key={r.name} className="border-b border-line-soft hover:bg-surface-alt">
+              <td className="py-2 pr-4">
+                <Link to={`/odags/${namespace}/${r.name}`} className="text-accent hover:text-accent-hover">{r.name}</Link>
+              </td>
+              <td className="py-2 pr-4 text-on-muted">#{r.run}</td>
+              <td className="py-2 pr-4"><StatusBadge phase={r.phase} /></td>
+              <td className="py-2 pr-4 text-on-muted">
+                {r.makespan != null && r.makespan > 0 ? `${r.makespan.toFixed(1)}s` : '—'}
+              </td>
+              <td className="py-2 text-on-faint">{formatAge(r.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function RunSortHeader({ label, k, sortKey, sortDir, onClick }: {
+  label: string; k: RunSortKey; sortKey: RunSortKey; sortDir: SortDir; onClick: (k: RunSortKey) => void
+}) {
+  const active = k === sortKey
+  const arrow = !active ? '' : sortDir === 'asc' ? ' ▲' : ' ▼'
+  return (
+    <th className={`pb-2 pr-4 cursor-pointer select-none ${active ? 'text-on-secondary' : 'hover:text-on-secondary'}`}
+      onClick={() => onClick(k)}>
+      {label}{arrow}
+    </th>
   )
 }
 

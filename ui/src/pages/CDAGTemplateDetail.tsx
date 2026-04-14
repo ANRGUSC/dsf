@@ -1,15 +1,19 @@
-import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { useParams, Link, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, CDAGTemplateInstance } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
 import TemplateGraph from '@/components/TemplateGraph'
 
 type Tab = 'graph' | 'tasks' | 'instances' | 'spec'
+const VALID_TABS: Tab[] = ['graph', 'tasks', 'instances', 'spec']
 
 export default function CDAGTemplateDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
-  const [tab, setTab] = useState<Tab>('graph')
+  const { hash } = useLocation()
+  const hashTab = hash.replace('#', '') as Tab
+  const initialTab: Tab = VALID_TABS.includes(hashTab) ? hashTab : 'graph'
+  const [tab, setTab] = useState<Tab>(initialTab)
   const queryClient = useQueryClient()
 
   const { data: template, isLoading, error } = useQuery({
@@ -143,38 +147,92 @@ function TasksTab({ spec }: { spec: { tasks: Array<{ name: string; image: string
 
 /* ---------- Instances Tab ---------- */
 
+type InstSortKey = 'name' | 'instance' | 'phase' | 'age'
+type InstSortDir = 'asc' | 'desc'
+
 function InstancesTab({ instances, namespace }: { instances: CDAGTemplateInstance[]; namespace: string }) {
+  const [query, setQuery] = useState('')
+  const [sortKey, setSortKey] = useState<InstSortKey>('age')
+  const [sortDir, setSortDir] = useState<InstSortDir>('asc')
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const filtered = q
+      ? instances.filter(i =>
+          i.name.toLowerCase().includes(q) ||
+          String(i.instance).includes(q) ||
+          i.phase.toLowerCase().includes(q))
+      : [...instances]
+    const cmp = (a: CDAGTemplateInstance, b: CDAGTemplateInstance): number => {
+      switch (sortKey) {
+        case 'name':     return a.name.localeCompare(b.name)
+        case 'instance': return Number(a.instance) - Number(b.instance)
+        case 'phase':    return a.phase.localeCompare(b.phase)
+        case 'age':      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      }
+    }
+    filtered.sort(cmp)
+    if (sortDir === 'desc') filtered.reverse()
+    return filtered
+  }, [instances, query, sortKey, sortDir])
+
+  function toggleSort(k: InstSortKey) {
+    if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(k); setSortDir('asc') }
+  }
+
   if (instances.length === 0) {
     return <p className="text-on-faint">No instances yet. Click "Deploy Instance" to create one.</p>
   }
+
   return (
-    <table className="w-full text-sm border-collapse">
-      <thead>
-        <tr className="text-left text-on-muted border-b border-line">
-          <th className="pb-2 pr-4">Name</th>
-          <th className="pb-2 pr-4">Instance</th>
-          <th className="pb-2 pr-4">Phase</th>
-          <th className="pb-2">Age</th>
-        </tr>
-      </thead>
-      <tbody>
-        {instances.map(inst => (
-          <tr key={inst.name} className="border-b border-line-soft hover:bg-surface-alt">
-            <td className="py-2 pr-4">
-              <Link
-                to={`/cdags/${namespace}/${inst.name}`}
-                className="text-accent hover:text-accent-hover"
-              >
-                {inst.name}
-              </Link>
-            </td>
-            <td className="py-2 pr-4 text-on-muted">#{inst.instance}</td>
-            <td className="py-2 pr-4"><StatusBadge phase={inst.phase} /></td>
-            <td className="py-2 text-on-faint">{formatAge(inst.createdAt)}</td>
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs text-on-faint">{visible.length} of {instances.length}</div>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Filter by name, instance #, phase…"
+          className="px-3 py-1 text-sm bg-surface-alt border border-line rounded w-64 focus:outline-none focus:border-accent"
+        />
+      </div>
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="text-left text-on-muted border-b border-line">
+            <InstSortHeader label="Name"     k="name"     sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <InstSortHeader label="Instance" k="instance" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <InstSortHeader label="Phase"    k="phase"    sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+            <InstSortHeader label="Age"      k="age"      sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {visible.map(inst => (
+            <tr key={inst.name} className="border-b border-line-soft hover:bg-surface-alt">
+              <td className="py-2 pr-4">
+                <Link to={`/cdags/${namespace}/${inst.name}`} className="text-accent hover:text-accent-hover">{inst.name}</Link>
+              </td>
+              <td className="py-2 pr-4 text-on-muted">#{inst.instance}</td>
+              <td className="py-2 pr-4"><StatusBadge phase={inst.phase} /></td>
+              <td className="py-2 text-on-faint">{formatAge(inst.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function InstSortHeader({ label, k, sortKey, sortDir, onClick }: {
+  label: string; k: InstSortKey; sortKey: InstSortKey; sortDir: InstSortDir; onClick: (k: InstSortKey) => void
+}) {
+  const active = k === sortKey
+  const arrow = !active ? '' : sortDir === 'asc' ? ' ▲' : ' ▼'
+  return (
+    <th className={`pb-2 pr-4 cursor-pointer select-none ${active ? 'text-on-secondary' : 'hover:text-on-secondary'}`}
+      onClick={() => onClick(k)}>
+      {label}{arrow}
+    </th>
   )
 }
 

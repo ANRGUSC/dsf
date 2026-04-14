@@ -1,6 +1,12 @@
 # Compiled binaries
 bin/
 archive/phase-2/cmd/scheduler/scheduler
+# Go binaries left at repo root by `go build -o <name>`
+/cdag-controller
+/cli
+/data-agent
+/odag-controller
+/ui-server
 
 # Frontend build output and dependencies
 ui/dist/
@@ -9,3 +15,12 @@ ui/node_modules/
 # Pathload archives
 archive/pathload/*.tar
 archive/pathload/*.tar.gz
+
+# SQLite databases (local dev state for ui-server / profiler)
+*.db
+*.db-shm
+*.db-wal
+
+# Python bytecode cache
+__pycache__/
+*.pyc

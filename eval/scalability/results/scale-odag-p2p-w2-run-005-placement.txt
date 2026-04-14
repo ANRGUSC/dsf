@@ -1,4 +1,0 @@
-scale-odag-p2p-w2-run-005-sink           anrg-6
-scale-odag-p2p-w2-run-005-source         anrg-3
-scale-odag-p2p-w2-run-005-worker-1       anrg-3
-scale-odag-p2p-w2-run-005-worker-2       anrg-5

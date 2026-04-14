@@ -17,7 +17,11 @@
 //   POST /push/<odag>/<task>         — ask agent to push local output to remote
 //                                      successor nodes; responds 200 immediately
 //                                      and completes transfer in background.
-//                                      Body: JSON {"successors":[{"name":"x","host":"1.2.3.4"},...]}
+//                                      Body: JSON {"successors":[{"name":"x","host":"1.2.3.4","node":"anrg-5"},...]}
+//
+// Flow endpoints:
+//   GET /flows/<odag>                — return all actual per-push flow records
+//                                      recorded on this node for the given ODAG.
 //
 // States: Executing | DataReady | Done | Failed
 //
@@ -35,6 +39,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +55,68 @@ var dataDir string
 func stateFile(rel string) string   { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-state") }
 func sendingFile(rel string) string { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-sending") }
 func bytesFile(rel string) string   { return filepath.Join(dataDir, filepath.Clean(rel), ".dsf-bytes") }
+func flowsFile(odag string) string  { return filepath.Join(dataDir, filepath.Clean(odag), ".dsf-flows.jsonl") }
+
+// flowRecord is a single completed (or failed) push from this node to one
+// downstream successor. Both timestamps are captured on the sender, so clock
+// drift across nodes never contaminates the duration.
+type flowRecord struct {
+	FromTask  string  `json:"fromTask"`
+	ToTask    string  `json:"toTask"`
+	SrcNode   string  `json:"srcNode"`
+	DstNode   string  `json:"dstNode"`
+	DataSize  int64   `json:"dataSize"`
+	StartUnix float64 `json:"startUnix"` // seconds since epoch (float, sub-millisecond precision)
+	EndUnix   float64 `json:"endUnix"`
+	Ok        bool    `json:"ok"`
+}
+
+var flowsMu sync.Mutex
+
+func appendFlow(odag string, rec flowRecord) {
+	path := flowsFile(odag)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		log.Printf("[data-agent] appendFlow mkdir %s: %v", path, err)
+		return
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		log.Printf("[data-agent] appendFlow marshal: %v", err)
+		return
+	}
+	flowsMu.Lock()
+	defer flowsMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("[data-agent] appendFlow open %s: %v", path, err)
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(line)
+	_, _ = f.Write([]byte("\n"))
+}
+
+func readFlows(odag string) []flowRecord {
+	path := flowsFile(odag)
+	flowsMu.Lock()
+	defer flowsMu.Unlock()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []flowRecord{}
+	}
+	out := make([]flowRecord, 0)
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var rec flowRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
+}
 
 // dirSize walks a directory tree and returns total bytes.
 func dirSize(path string) int64 {
@@ -161,6 +228,7 @@ func main() {
 			Successors []struct {
 				Name string `json:"name"`
 				Host string `json:"host"`
+				Node string `json:"node"`
 			} `json:"successors"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -197,12 +265,26 @@ func main() {
 			allOK := true
 			for _, succ := range body.Successors {
 				log.Printf("[data-agent/%s] PUSH %s/%s -> %s (%s)", nodeName, odag, task, succ.Name, succ.Host)
-				if err := pushToNode(odag, task, succ.Host, data); err != nil {
+				start := time.Now()
+				err := pushToNode(odag, task, succ.Host, data)
+				end := time.Now()
+				ok := err == nil
+				if err != nil {
 					log.Printf("[data-agent/%s] PUSH %s/%s -> %s FAILED: %v", nodeName, odag, task, succ.Name, err)
 					allOK = false
 				} else {
-					log.Printf("[data-agent/%s] PUSH %s/%s -> %s OK", nodeName, odag, task, succ.Name)
+					log.Printf("[data-agent/%s] PUSH %s/%s -> %s OK (%.3fs)", nodeName, odag, task, succ.Name, end.Sub(start).Seconds())
 				}
+				appendFlow(odag, flowRecord{
+					FromTask:  task,
+					ToTask:    succ.Name,
+					SrcNode:   nodeName,
+					DstNode:   succ.Node,
+					DataSize:  int64(len(data)),
+					StartUnix: float64(start.UnixNano()) / 1e9,
+					EndUnix:   float64(end.UnixNano()) / 1e9,
+					Ok:        ok,
+				})
 			}
 
 			setSending(rel, false)
@@ -377,6 +459,30 @@ func main() {
 		}
 		log.Printf("[data-agent/%s] DELETE %s: removed", nodeName, odag)
 		w.WriteHeader(http.StatusOK)
+	})
+
+	// GET /flows/<odag>    — returns all per-push flow records on this node.
+	// DELETE /flows/<odag> — truncates the flow log (idempotent).
+	http.HandleFunc("/flows/", func(w http.ResponseWriter, r *http.Request) {
+		odag := strings.TrimPrefix(r.URL.Path, "/flows/")
+		odag = strings.TrimSuffix(odag, "/")
+		if odag == "" || strings.Contains(odag, "/") || strings.Contains(odag, "..") {
+			http.Error(w, "invalid odag name", http.StatusBadRequest)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			flows := readFlows(odag)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(flows)
+		case http.MethodDelete:
+			flowsMu.Lock()
+			_ = os.Remove(flowsFile(odag))
+			flowsMu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	// PUT/GET /<odag>/<task>/output

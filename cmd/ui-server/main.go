@@ -19,6 +19,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -41,28 +43,32 @@ var (
 // --------------------------------------------------------------------------
 
 type Server struct {
-	dynClient dynamic.Interface
-	db        *sql.DB
-	mu        sync.RWMutex
-	odags          map[string]*unstructured.Unstructured // "ns/name" -> obj
-	cdags          map[string]*unstructured.Unstructured
-	templates      map[string]*unstructured.Unstructured
-	cdagTemplates  map[string]*unstructured.Unstructured
+	dynClient  dynamic.Interface
+	kubeClient kubernetes.Interface
+	restConfig *rest.Config
+	db         *sql.DB
+	mu         sync.RWMutex
+	odags         map[string]*unstructured.Unstructured // "ns/name" -> obj
+	cdags         map[string]*unstructured.Unstructured
+	templates     map[string]*unstructured.Unstructured
+	cdagTemplates map[string]*unstructured.Unstructured
 
 	// SSE clients: each client gets a channel of JSON event bytes.
 	sseMu      sync.Mutex
 	sseClients map[chan []byte]struct{}
 }
 
-func newServer(dynClient dynamic.Interface, db *sql.DB) *Server {
+func newServer(dynClient dynamic.Interface, kubeClient kubernetes.Interface, cfg *rest.Config, db *sql.DB) *Server {
 	return &Server{
-		dynClient:  dynClient,
-		db:         db,
+		dynClient:     dynClient,
+		kubeClient:    kubeClient,
+		restConfig:    cfg,
+		db:            db,
 		odags:         make(map[string]*unstructured.Unstructured),
 		cdags:         make(map[string]*unstructured.Unstructured),
 		templates:     make(map[string]*unstructured.Unstructured),
 		cdagTemplates: make(map[string]*unstructured.Unstructured),
-		sseClients: make(map[chan []byte]struct{}),
+		sseClients:    make(map[chan []byte]struct{}),
 	}
 }
 
@@ -85,6 +91,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("[ui-server] failed to create dynamic client: %v", err)
 	}
+	kubeClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		log.Fatalf("[ui-server] failed to create kubernetes client: %v", err)
+	}
 
 	db, err := openDB(dbPath)
 	if err != nil {
@@ -92,7 +102,7 @@ func main() {
 	}
 	defer db.Close()
 
-	srv := newServer(dynClient, db)
+	srv := newServer(dynClient, kubeClient, cfg, db)
 
 	// Start K8s watch loops.
 	go srv.watchResources(odagGVR, &srv.odags)
@@ -108,10 +118,13 @@ func main() {
 	mux.HandleFunc("POST /api/odags/{namespace}/{name}/retry", srv.handleRetryODAG)
 	mux.HandleFunc("GET /api/cdags", srv.handleListCDAGs)
 	mux.HandleFunc("GET /api/cdags/{namespace}/{name}", srv.handleGetCDAG)
+	mux.HandleFunc("GET /api/cdags/{namespace}/{name}/placements", srv.handleGetCDAGPlacements)
+	mux.HandleFunc("GET /api/cdags/{namespace}/{name}/metrics", srv.handleGetCDAGMetrics)
 	mux.HandleFunc("POST /api/batch", srv.handleBatchSubmit)
 	mux.HandleFunc("GET /api/templates", srv.handleListTemplates)
 	mux.HandleFunc("GET /api/templates/{namespace}/{name}", srv.handleGetTemplate)
 	mux.HandleFunc("GET /api/templates/{namespace}/{name}/runs", srv.handleGetTemplateRuns)
+	mux.HandleFunc("GET /api/templates/{namespace}/{name}/history", srv.handleGetTemplateHistory)
 	mux.HandleFunc("POST /api/templates/{namespace}/{name}/run", srv.handleRunTemplate)
 	mux.HandleFunc("DELETE /api/templates/{namespace}/{name}", srv.handleDeleteTemplate)
 	mux.HandleFunc("GET /api/cdag-templates", srv.handleListCDAGTemplates)
@@ -120,6 +133,7 @@ func main() {
 	mux.HandleFunc("POST /api/cdag-templates/{namespace}/{name}/deploy", srv.handleDeployCDAGTemplate)
 	mux.HandleFunc("DELETE /api/cdag-templates/{namespace}/{name}", srv.handleDeleteCDAGTemplate)
 	mux.HandleFunc("GET /api/events", srv.handleSSE)
+	mux.HandleFunc("GET /api/cluster/nodes", srv.handleClusterNodes)
 
 	// Serve compiled React frontend from ui/dist (embedded at build time).
 	// During development, the Vite dev server proxies /api to this server.
@@ -195,6 +209,10 @@ func (s *Server) watchResources(gvr schema.GroupVersionResource, cache *map[stri
 						go s.recordHistory(obj)
 					}
 				}
+				// Sample CDAG replica placements on every update.
+				if gvr == cdagGVR {
+					go s.sampleCDAGPlacements(obj)
+				}
 			case "DELETED":
 				delete(*cache, key)
 			}
@@ -241,6 +259,219 @@ func (s *Server) handleGetODAGHistory(w http.ResponseWriter, r *http.Request) {
 	ns := r.PathValue("namespace")
 	name := r.PathValue("name")
 	history, err := s.queryHistory(ns, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, history)
+}
+
+// --------------------------------------------------------------------------
+// Cluster node health dashboard
+// --------------------------------------------------------------------------
+
+type nodeInfoResp struct {
+	Name             string  `json:"name"`
+	Ready            bool    `json:"ready"`
+	Schedulable      bool    `json:"schedulable"`
+	Roles            string  `json:"roles"`
+	InternalIP       string  `json:"internalIP"`
+	KubeletVersion   string  `json:"kubeletVersion"`
+	AllocCPUMillis   int64   `json:"allocCPUMillis"`
+	AllocMemBytes    int64   `json:"allocMemBytes"`
+	UsedCPUMillis    int64   `json:"usedCPUMillis"`
+	UsedMemBytes     int64   `json:"usedMemBytes"`
+	CPUPct           float64 `json:"cpuPct"`
+	MemPct           float64 `json:"memPct"`
+	TotalPods        int     `json:"totalPods"`
+	ODAGTasks        int     `json:"odagTasks"`
+	CDAGTasks        int     `json:"cdagTasks"`
+	RunningODAGTasks int     `json:"runningOdagTasks"`
+	RunningCDAGTasks int     `json:"runningCdagTasks"`
+}
+
+func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	nodes, err := s.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		http.Error(w, "list nodes: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pods, err := s.kubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		http.Error(w, "list pods: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Metrics via raw REST (avoids adding k8s.io/metrics dep).
+	type metricsItem struct {
+		Metadata struct{ Name string } `json:"metadata"`
+		Usage    struct {
+			CPU    string `json:"cpu"`
+			Memory string `json:"memory"`
+		} `json:"usage"`
+	}
+	type metricsList struct {
+		Items []metricsItem `json:"items"`
+	}
+	usage := map[string]struct{ cpu, mem int64 }{}
+	if raw, err := s.kubeClient.Discovery().RESTClient().
+		Get().AbsPath("/apis/metrics.k8s.io/v1beta1/nodes").DoRaw(ctx); err == nil {
+		var ml metricsList
+		if json.Unmarshal(raw, &ml) == nil {
+			for _, it := range ml.Items {
+				cpu := parseCPUQuantity(it.Usage.CPU)
+				mem := parseMemoryQuantity(it.Usage.Memory)
+				usage[it.Metadata.Name] = struct{ cpu, mem int64 }{cpu, mem}
+			}
+		}
+	}
+
+	// Tally pods per node.
+	type podTally struct {
+		total, odag, cdag, odagRunning, cdagRunning int
+	}
+	tally := map[string]*podTally{}
+	for _, p := range pods.Items {
+		n := p.Spec.NodeName
+		if n == "" {
+			continue
+		}
+		t := tally[n]
+		if t == nil {
+			t = &podTally{}
+			tally[n] = t
+		}
+		t.total++
+		switch {
+		case p.Labels["dsf-odag"] != "":
+			t.odag++
+			if p.Status.Phase == corev1.PodRunning {
+				t.odagRunning++
+			}
+		case p.Labels["dsf-cdag"] != "":
+			t.cdag++
+			if p.Status.Phase == corev1.PodRunning {
+				t.cdagRunning++
+			}
+		}
+	}
+
+	result := make([]nodeInfoResp, 0, len(nodes.Items))
+	for _, n := range nodes.Items {
+		ready := false
+		for _, c := range n.Status.Conditions {
+			if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
+				ready = true
+			}
+		}
+		schedulable := !n.Spec.Unschedulable
+		roles := []string{}
+		for k := range n.Labels {
+			if strings.HasPrefix(k, "node-role.kubernetes.io/") {
+				r := strings.TrimPrefix(k, "node-role.kubernetes.io/")
+				if r != "" {
+					roles = append(roles, r)
+				}
+			}
+		}
+		if len(roles) == 0 {
+			roles = []string{"worker"}
+		}
+		internalIP := ""
+		for _, a := range n.Status.Addresses {
+			if a.Type == corev1.NodeInternalIP {
+				internalIP = a.Address
+				break
+			}
+		}
+		allocCPU := n.Status.Allocatable.Cpu().MilliValue()
+		allocMem, _ := n.Status.Allocatable.Memory().AsInt64()
+		u := usage[n.Name]
+		cpuPct := 0.0
+		memPct := 0.0
+		if allocCPU > 0 {
+			cpuPct = float64(u.cpu) / float64(allocCPU) * 100
+		}
+		if allocMem > 0 {
+			memPct = float64(u.mem) / float64(allocMem) * 100
+		}
+		t := tally[n.Name]
+		if t == nil {
+			t = &podTally{}
+		}
+		result = append(result, nodeInfoResp{
+			Name:             n.Name,
+			Ready:            ready,
+			Schedulable:      schedulable,
+			Roles:            strings.Join(roles, ","),
+			InternalIP:       internalIP,
+			KubeletVersion:   n.Status.NodeInfo.KubeletVersion,
+			AllocCPUMillis:   allocCPU,
+			AllocMemBytes:    allocMem,
+			UsedCPUMillis:    u.cpu,
+			UsedMemBytes:     u.mem,
+			CPUPct:           cpuPct,
+			MemPct:           memPct,
+			TotalPods:        t.total,
+			ODAGTasks:        t.odag,
+			CDAGTasks:        t.cdag,
+			RunningODAGTasks: t.odagRunning,
+			RunningCDAGTasks: t.cdagRunning,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	writeJSON(w, result)
+}
+
+// parseCPUQuantity parses k8s CPU strings: "100m", "2", "1500000n" → millicores.
+func parseCPUQuantity(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	if strings.HasSuffix(s, "n") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(s, "n"), 10, 64)
+		return v / 1_000_000
+	}
+	if strings.HasSuffix(s, "u") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(s, "u"), 10, 64)
+		return v / 1_000
+	}
+	if strings.HasSuffix(s, "m") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(s, "m"), 10, 64)
+		return v
+	}
+	f, _ := strconv.ParseFloat(s, 64)
+	return int64(f * 1000)
+}
+
+// parseMemoryQuantity parses "1024Ki", "2Mi", "3Gi", "500M" → bytes.
+func parseMemoryQuantity(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	mult := int64(1)
+	for _, suf := range []struct {
+		sfx string
+		m   int64
+	}{
+		{"Ki", 1024}, {"Mi", 1024 * 1024}, {"Gi", 1024 * 1024 * 1024}, {"Ti", 1024 * 1024 * 1024 * 1024},
+		{"K", 1000}, {"M", 1000_000}, {"G", 1000_000_000}, {"T", 1000_000_000_000},
+	} {
+		if strings.HasSuffix(s, suf.sfx) {
+			mult = suf.m
+			s = strings.TrimSuffix(s, suf.sfx)
+			break
+		}
+	}
+	v, _ := strconv.ParseInt(s, 10, 64)
+	return v * mult
+}
+
+func (s *Server) handleGetTemplateHistory(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	history, err := s.queryTemplateHistory(ns, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -853,6 +1084,17 @@ func openDB(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS cdag_placements (
+			namespace TEXT NOT NULL,
+			name      TEXT NOT NULL,
+			task      TEXT NOT NULL,
+			node      TEXT NOT NULL,
+			ts        INTEGER NOT NULL
+		)
+	`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_cdag_placements_ns_name_ts ON cdag_placements(namespace, name, ts)`)
+
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS dag_runs (
 			id              TEXT PRIMARY KEY,
@@ -865,7 +1107,24 @@ func openDB(path string) (*sql.DB, error) {
 			created_at      TEXT DEFAULT (datetime('now'))
 		)
 	`)
-	return db, err
+	if err != nil {
+		return db, err
+	}
+	// Backfill rows that predate startTime recording: derive from
+	// completion_time − makespan when both are present, else use created_at.
+	_, _ = db.Exec(`
+		UPDATE dag_runs
+		SET start_time = datetime(completion_time, '-' || CAST(makespan AS TEXT) || ' seconds')
+		WHERE (start_time IS NULL OR start_time = '')
+		  AND completion_time IS NOT NULL AND completion_time != ''
+		  AND makespan IS NOT NULL AND makespan > 0
+	`)
+	_, _ = db.Exec(`
+		UPDATE dag_runs
+		SET start_time = created_at
+		WHERE start_time IS NULL OR start_time = ''
+	`)
+	return db, nil
 }
 
 func (s *Server) recordHistory(obj *unstructured.Unstructured) {
@@ -876,6 +1135,20 @@ func (s *Server) recordHistory(obj *unstructured.Unstructured) {
 	makespan := nestedFloat(obj.Object, "status", "makespan")
 	startTime, _, _ := unstructured.NestedString(obj.Object, "status", "startTime")
 	completionTime, _, _ := unstructured.NestedString(obj.Object, "status", "completionTime")
+
+	// Fallbacks so historical UIs never render "Invalid Date":
+	//   1. derive from completionTime − makespan if both known
+	//   2. else use the ODAG's creation timestamp
+	if startTime == "" {
+		if completionTime != "" && makespan > 0 {
+			if ct, err := time.Parse(time.RFC3339, completionTime); err == nil {
+				startTime = ct.Add(-time.Duration(makespan * float64(time.Second))).UTC().Format(time.RFC3339)
+			}
+		}
+		if startTime == "" {
+			startTime = obj.GetCreationTimestamp().UTC().Format(time.RFC3339)
+		}
+	}
 
 	_, err := s.db.Exec(
 		`INSERT OR IGNORE INTO dag_runs (id, name, namespace, phase, makespan, start_time, completion_time)
@@ -893,6 +1166,191 @@ type historyEntry struct {
 	Makespan       float64 `json:"makespan"`
 	StartTime      string  `json:"startTime"`
 	CompletionTime string  `json:"completionTime"`
+}
+
+// sampleCDAGPlacements writes one row per task-replica assignment to the
+// cdag_placements table when it changes relative to the last recorded row.
+// Space-efficient: identical consecutive samples are coalesced by (ts = now).
+func (s *Server) sampleCDAGPlacements(obj *unstructured.Unstructured) {
+	ns := obj.GetNamespace()
+	name := obj.GetName()
+	tasksRaw, _, _ := unstructured.NestedSlice(obj.Object, "status", "tasks")
+	if len(tasksRaw) == 0 {
+		return
+	}
+	now := time.Now().Unix()
+
+	type sample struct{ task, node string }
+	samples := make([]sample, 0, len(tasksRaw))
+	for _, t := range tasksRaw {
+		tm, ok := t.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		taskName, _ := tm["name"].(string)
+		node, _ := tm["node"].(string)
+		if taskName == "" || node == "" {
+			continue
+		}
+		samples = append(samples, sample{taskName, node})
+	}
+	if len(samples) == 0 {
+		return
+	}
+
+	// Only write if placement changed since the last sample per task.
+	for _, s2 := range samples {
+		var lastNode string
+		_ = s.db.QueryRow(
+			`SELECT node FROM cdag_placements
+			 WHERE namespace=? AND name=? AND task=?
+			 ORDER BY ts DESC LIMIT 1`,
+			ns, name, s2.task,
+		).Scan(&lastNode)
+		if lastNode == s2.node {
+			continue
+		}
+		_, _ = s.db.Exec(
+			`INSERT INTO cdag_placements (namespace, name, task, node, ts) VALUES (?,?,?,?,?)`,
+			ns, name, s2.task, s2.node, now,
+		)
+	}
+}
+
+type cdagPlacement struct {
+	Task string `json:"task"`
+	Node string `json:"node"`
+	TS   int64  `json:"ts"`
+}
+
+// handleGetCDAGMetrics scrapes each live CDAG task pod's :8090/metrics and
+// aggregates the per-replica snapshots into a per-task view.
+func (s *Server) handleGetCDAGMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+
+	pods, err := s.kubeClient.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "dsf-cdag=" + name,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type replicaMetrics struct {
+		Pod     string                 `json:"pod"`
+		Node    string                 `json:"node"`
+		Error   string                 `json:"error,omitempty"`
+		Metrics map[string]interface{} `json:"metrics,omitempty"`
+	}
+	type taskMetrics struct {
+		Task     string           `json:"task"`
+		Replicas []replicaMetrics `json:"replicas"`
+	}
+
+	byTask := map[string]*taskMetrics{}
+	httpC := &http.Client{Timeout: 2 * time.Second}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		task := p.Labels["dsf-task"]
+		if task == "" {
+			continue
+		}
+		tm := byTask[task]
+		if tm == nil {
+			tm = &taskMetrics{Task: task}
+			byTask[task] = tm
+		}
+		entry := replicaMetrics{Pod: p.Name, Node: p.Spec.NodeName}
+		if p.Status.PodIP == "" {
+			entry.Error = "no pod IP"
+		} else {
+			url := fmt.Sprintf("http://%s:8090/metrics", p.Status.PodIP)
+			resp, err := httpC.Get(url)
+			if err != nil {
+				entry.Error = err.Error()
+			} else {
+				defer resp.Body.Close()
+				var m map[string]interface{}
+				if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+					entry.Error = "decode: " + err.Error()
+				} else {
+					entry.Metrics = m
+				}
+			}
+		}
+		tm.Replicas = append(tm.Replicas, entry)
+	}
+
+	out := make([]*taskMetrics, 0, len(byTask))
+	for _, tm := range byTask {
+		out = append(out, tm)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Task < out[j].Task })
+	writeJSON(w, out)
+}
+
+func (s *Server) handleGetCDAGPlacements(w http.ResponseWriter, r *http.Request) {
+	ns := r.PathValue("namespace")
+	name := r.PathValue("name")
+	rows, err := s.db.Query(
+		`SELECT task, node, ts FROM cdag_placements
+		 WHERE namespace=? AND name=? ORDER BY ts ASC`,
+		ns, name,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	out := make([]cdagPlacement, 0)
+	for rows.Next() {
+		var p cdagPlacement
+		if err := rows.Scan(&p.Task, &p.Node, &p.TS); err != nil {
+			continue
+		}
+		out = append(out, p)
+	}
+	writeJSON(w, out)
+}
+
+// templateHistoryEntry is a per-run record scoped to all runs of a template.
+type templateHistoryEntry struct {
+	Name           string  `json:"name"`
+	RunID          string  `json:"runId"`
+	Phase          string  `json:"phase"`
+	Makespan       float64 `json:"makespan"`
+	StartTime      string  `json:"startTime"`
+	CompletionTime string  `json:"completionTime"`
+}
+
+// queryTemplateHistory returns all runs whose name starts with "<template>-run-".
+// Mirrors the naming scheme used by createRunFromTemplate in the controller.
+func (s *Server) queryTemplateHistory(namespace, templateName string) ([]templateHistoryEntry, error) {
+	prefix := templateName + "-run-"
+	rows, err := s.db.Query(
+		`SELECT name, id, phase, COALESCE(makespan, 0), COALESCE(start_time, ''), COALESCE(completion_time, '')
+		 FROM dag_runs
+		 WHERE namespace = ? AND name LIKE ? AND phase = 'Succeeded'
+		 ORDER BY created_at ASC`,
+		namespace, prefix+"%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]templateHistoryEntry, 0)
+	for rows.Next() {
+		var e templateHistoryEntry
+		if err := rows.Scan(&e.Name, &e.RunID, &e.Phase, &e.Makespan, &e.StartTime, &e.CompletionTime); err != nil {
+			continue
+		}
+		result = append(result, e)
+	}
+	return result, nil
 }
 
 func (s *Server) queryHistory(namespace, name string) ([]historyEntry, error) {
@@ -949,10 +1407,18 @@ func odagDetail(obj *unstructured.Unstructured) map[string]interface{} {
 	taskStatuses, _, _ := unstructured.NestedSlice(obj.Object, "status", "tasks")
 	specTasks, _, _ := unstructured.NestedSlice(obj.Object, "spec", "tasks")
 	predictedTasks, _, _ := unstructured.NestedSlice(obj.Object, "status", "predictedTasks")
+	predictedFlows, _, _ := unstructured.NestedSlice(obj.Object, "status", "predictedNetworkFlows")
+	actualFlows, _, _ := unstructured.NestedSlice(obj.Object, "status", "actualNetworkFlows")
 	summary["tasks"] = taskStatuses
 	summary["spec"] = map[string]interface{}{"tasks": specTasks}
 	if predictedTasks != nil {
 		summary["predictedTasks"] = predictedTasks
+	}
+	if predictedFlows != nil {
+		summary["predictedNetworkFlows"] = predictedFlows
+	}
+	if actualFlows != nil {
+		summary["actualNetworkFlows"] = actualFlows
 	}
 	return summary
 }

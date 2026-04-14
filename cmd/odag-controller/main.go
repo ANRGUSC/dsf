@@ -247,6 +247,7 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 	schedulerName, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
 	var assignMap map[string]nodeInfo
 	var predicted []predictedTaskEntry
+	var flows []predictedFlowEntry
 	switch schedulerName {
 	case "heft":
 		log.Printf("[odag-ctrl] using HEFT scheduler for %s", key)
@@ -263,14 +264,25 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 				})
 			}
 		}
+		for _, f := range hr.flows {
+			flows = append(flows, predictedFlowEntry{
+				FromTask: f.FromTask,
+				ToTask:   f.ToTask,
+				SrcNode:  f.SrcNode,
+				DstNode:  f.DstNode,
+				Start:    f.Start,
+				End:      f.End,
+				DataSize: f.DataSize,
+			})
+		}
 	default:
 		log.Printf("[odag-ctrl] using random scheduler for %s", key)
 		assignMap = assignTasks(tasks, nodeMap)
-		predicted = computePredictedSchedule(tasks, assignMap, rtRes, dsRes, bwRes)
+		predicted, flows = computePredictedSchedule(tasks, assignMap, rtRes, dsRes, bwRes)
 	}
 	assignmentCache.Store(key, assignMap)
 
-	writePredictedSchedule(dynClient, namespace, odagName, predicted)
+	writePredictedSchedule(dynClient, namespace, odagName, predicted, flows)
 
 	log.Printf("[odag-ctrl] task placement for %s:", key)
 	for task, ni := range assignMap {
@@ -288,6 +300,15 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 		}
 		for _, dep := range task.Dependencies {
 			resetTaskState(childNi.ip, odagName, dep)
+		}
+	}
+
+	// Also clear the data-agent flow log on every involved node, so stale
+	// records from a previous run of the same ODAG name don't leak into
+	// this run's chart.
+	for _, ni := range assignMap {
+		if ni.ip != "" {
+			go deleteFlows(ni.ip, odagName)
 		}
 	}
 
@@ -438,6 +459,7 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 
 	// Update per-task statuses and check overall completion.
 	updateTaskStatuses(dynClient, namespace, odagName, podItems, assignMap, tasks)
+	updateActualFlows(dynClient, namespace, odagName, assignMap, podItems)
 	checkODAGCompletion(dynClient, client, podItems, namespace, odagName, len(tasks))
 }
 
@@ -875,6 +897,45 @@ func queryTaskBytes(nodeIP, odagName, taskName string) int64 {
 	return n
 }
 
+// dataAgentFlow is one per-push flow record returned by data-agent /flows/<odag>.
+type dataAgentFlow struct {
+	FromTask  string  `json:"fromTask"`
+	ToTask    string  `json:"toTask"`
+	SrcNode   string  `json:"srcNode"`
+	DstNode   string  `json:"dstNode"`
+	DataSize  int64   `json:"dataSize"`
+	StartUnix float64 `json:"startUnix"`
+	EndUnix   float64 `json:"endUnix"`
+	Ok        bool    `json:"ok"`
+}
+
+// deleteFlows truncates the flow log for an ODAG on one node's data-agent.
+func deleteFlows(nodeIP, odagName string) {
+	url := fmt.Sprintf("http://%s:%d/flows/%s", nodeIP, dataAgentPort, odagName)
+	req, _ := http.NewRequest(http.MethodDelete, url, nil)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[odag-ctrl] deleteFlows %s on %s: %v", odagName, nodeIP, err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// queryFlows pulls the flow log for an ODAG from one node's data-agent.
+func queryFlows(nodeIP, odagName string) []dataAgentFlow {
+	url := fmt.Sprintf("http://%s:%d/flows/%s", nodeIP, dataAgentPort, odagName)
+	resp, err := httpClient.Get(url)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	defer resp.Body.Close()
+	var out []dataAgentFlow
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil
+	}
+	return out
+}
+
 // queryTaskState returns the raw state string from the data-agent, or "" on error.
 func queryTaskState(nodeIP, odagName, taskName string) string {
 	url := fmt.Sprintf("http://%s:%d/state/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
@@ -913,7 +974,7 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 			"node":    pod.Spec.NodeName,
 		}
 		if pod.Status.StartTime != nil {
-			ts["startTime"] = pod.Status.StartTime.UTC().Format(time.RFC3339)
+			ts["startTime"] = pod.Status.StartTime.UTC().Format(time.RFC3339Nano)
 		}
 		podPhase := "Pending"
 		taskState := "Scheduled" // default when pod exists but not yet Running
@@ -938,7 +999,7 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 			taskState = "Done" // pod exited cleanly; data-agent state irrelevant
 			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.State.Terminated != nil {
-					ts["completionTime"] = cs.State.Terminated.FinishedAt.UTC().Format(time.RFC3339)
+					ts["completionTime"] = cs.State.Terminated.FinishedAt.UTC().Format(time.RFC3339Nano)
 				}
 			}
 		case corev1.PodFailed:
@@ -946,7 +1007,7 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 			taskState = "Failed"
 			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.State.Terminated != nil {
-					ts["completionTime"] = cs.State.Terminated.FinishedAt.UTC().Format(time.RFC3339)
+					ts["completionTime"] = cs.State.Terminated.FinishedAt.UTC().Format(time.RFC3339Nano)
 				}
 			}
 		}
@@ -959,6 +1020,82 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 	}
 
 	patch := map[string]interface{}{"status": map[string]interface{}{"tasks": taskStatuses}}
+	data, _ := json.Marshal(patch)
+	_, _ = dynClient.Resource(odagGVR).Namespace(namespace).Patch(
+		context.Background(), odagName, types.MergePatchType, data,
+		metav1.PatchOptions{}, "status",
+	)
+}
+
+// updateActualFlows polls each node's data-agent /flows/<odag> endpoint, merges
+// the per-push records, converts absolute timestamps to seconds-from-t0 where
+// t0 is the earliest pod startTime (same origin the execution Gantt uses), and
+// patches status.actualNetworkFlows. Safe to call every reconcile — the full
+// list is written each time (flows on disk are authoritative and monotonic).
+func updateActualFlows(dynClient dynamic.Interface, namespace, odagName string, assignMap map[string]nodeInfo, pods []corev1.Pod) {
+	// Collect unique src nodes — only senders record flows.
+	seen := make(map[string]string) // nodeName -> nodeIP
+	for _, ni := range assignMap {
+		if ni.ip == "" {
+			continue
+		}
+		seen[ni.name] = ni.ip
+	}
+	if len(seen) == 0 {
+		return
+	}
+
+	var all []dataAgentFlow
+	for _, ip := range seen {
+		all = append(all, queryFlows(ip, odagName)...)
+	}
+	if len(all) == 0 {
+		return
+	}
+
+	// t0 = earliest pod startTime. Same origin as the execution Gantt
+	// (GanttChart.tsx also uses min(task.startTime)). Fall back to the
+	// earliest flow start if no pod has a startTime yet.
+	var t0 float64
+	haveT0 := false
+	for _, pod := range pods {
+		if pod.Status.StartTime == nil {
+			continue
+		}
+		s := float64(pod.Status.StartTime.UnixNano()) / 1e9
+		if !haveT0 || s < t0 {
+			t0 = s
+			haveT0 = true
+		}
+	}
+	if !haveT0 {
+		t0 = all[0].StartUnix
+		for _, f := range all {
+			if f.StartUnix < t0 {
+				t0 = f.StartUnix
+			}
+		}
+	}
+
+	entries := make([]map[string]any, 0, len(all))
+	for _, f := range all {
+		entries = append(entries, map[string]any{
+			"fromTask": f.FromTask,
+			"toTask":   f.ToTask,
+			"srcNode":  f.SrcNode,
+			"dstNode":  f.DstNode,
+			"dataSize": f.DataSize,
+			"start":    f.StartUnix - t0,
+			"end":      f.EndUnix - t0,
+			"ok":       f.Ok,
+		})
+	}
+
+	patch := map[string]any{
+		"status": map[string]any{
+			"actualNetworkFlows": entries,
+		},
+	}
 	data, _ := json.Marshal(patch)
 	_, _ = dynClient.Resource(odagGVR).Namespace(namespace).Patch(
 		context.Background(), odagName, types.MergePatchType, data,
@@ -1052,11 +1189,16 @@ func updateODAGPhase(dynClient dynamic.Interface, namespace, name, phase, messag
 	} else {
 		runningODAGs.Delete(key)
 	}
+	status := map[string]interface{}{
+		"phase":   phase,
+		"message": message,
+	}
+	// Stamp startTime on first transition to Running.
+	if phase == "Running" {
+		status["startTime"] = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	patch := map[string]interface{}{
-		"status": map[string]interface{}{
-			"phase":   phase,
-			"message": message,
-		},
+		"status": status,
 	}
 	data, _ := json.Marshal(patch)
 	_, _ = dynClient.Resource(odagGVR).Namespace(namespace).Patch(
@@ -1067,7 +1209,7 @@ func updateODAGPhase(dynClient dynamic.Interface, namespace, name, phase, messag
 
 func updateODAGCompletion(dynClient dynamic.Interface, namespace, name string, makespan float64) {
 	runningODAGs.Delete(namespace + "/" + name)
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	patch := map[string]interface{}{
 		"status": map[string]interface{}{
 			"phase":          "Succeeded",

@@ -1,4 +1,6 @@
 import type { ODAGDetail } from '@/api/client'
+import type { ScheduleAlignment } from './scheduleAlignment'
+import { computeAlignment } from './scheduleAlignment'
 
 function isDark() { return document.documentElement.classList.contains('dark') }
 function rowEven() { return isDark() ? '#0f172a' : '#f9fafb' }
@@ -20,20 +22,42 @@ function taskColor(name: string, names: string[]): string {
   return TASK_COLORS[names.indexOf(name) % TASK_COLORS.length]
 }
 
-interface Props {
-  dag: ODAGDetail
+function assignSubRows(bars: Array<{ name: string; start: number; end: number }>): Record<string, number> {
+  const sorted = [...bars].sort((a, b) => a.start - b.start)
+  const rows: number[] = []
+  const assignment: Record<string, number> = {}
+  for (const bar of sorted) {
+    let placed = false
+    for (let r = 0; r < rows.length; r++) {
+      if (bar.start >= rows[r]) {
+        rows[r] = bar.end
+        assignment[bar.name] = r
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      assignment[bar.name] = rows.length
+      rows.push(bar.end)
+    }
+  }
+  return assignment
 }
 
-export default function GanttChart({ dag }: Props) {
+interface Props {
+  dag: ODAGDetail
+  align?: ScheduleAlignment
+}
+
+export default function GanttChart({ dag, align }: Props) {
+  const a = align ?? computeAlignment(dag)
   const predicted = dag.predictedTasks ?? []
   const taskNames = dag.spec.tasks.map(t => t.name)
 
-  // Actual bars: tasks with a startTime
   const activeTasks = dag.tasks.filter(t => t.startTime && t.node)
   const refMs = activeTasks.length > 0
     ? Math.min(...activeTasks.map(t => new Date(t.startTime!).getTime()))
     : null
-
   const actualBars = activeTasks.map(t => ({
     name: t.name,
     node: t.node!,
@@ -43,172 +67,61 @@ export default function GanttChart({ dag }: Props) {
       : (Date.now() - refMs!) / 1000,
   }))
 
-  // Collect all nodes
-  const nodeSet = new Set<string>()
-  predicted.forEach(p => nodeSet.add(p.node))
-  actualBars.forEach(b => nodeSet.add(b.node))
-  const nodes = Array.from(nodeSet).sort()
-
-  if (nodes.length === 0) {
+  if (a.nodes.length === 0) {
     return <p className="text-on-faint text-sm">No schedule data yet.</p>
   }
 
-  // Count max parallel tasks per node (for row height).
-  // Group tasks by node and check how many overlap in time.
-  const predictedByNode: Record<string, typeof predicted> = {}
-  for (const p of predicted) {
-    ;(predictedByNode[p.node] ??= []).push(p)
-  }
-  const actualByNode: Record<string, typeof actualBars> = {}
-  for (const b of actualBars) {
-    ;(actualByNode[b.node] ??= []).push(b)
-  }
-
-  // Count max overlapping bars for each node.
-  function maxOverlap(bars: Array<{ start: number; end: number }>): number {
-    if (bars.length <= 1) return bars.length
-    const events: Array<{ t: number; delta: number }> = []
-    for (const b of bars) {
-      events.push({ t: b.start, delta: 1 })
-      events.push({ t: b.end, delta: -1 })
-    }
-    events.sort((a, b) => a.t - b.t || a.delta - b.delta)
-    let cur = 0, mx = 0
-    for (const e of events) {
-      cur += e.delta
-      mx = Math.max(mx, cur)
-    }
-    return mx
-  }
-
-  // For each node, compute how many sub-rows are needed (predicted + actual).
-  const nodeSlots: Record<string, number> = {}
-  for (const node of nodes) {
-    const pOverlap = maxOverlap((predictedByNode[node] ?? []).map(p => ({ start: p.estStart, end: p.estEnd })))
-    const aOverlap = maxOverlap(actualByNode[node] ?? [])
-    nodeSlots[node] = Math.max(pOverlap, aOverlap, 1)
-  }
-
-  const maxTime = Math.max(
-    ...actualBars.map(b => b.end),
-    ...predicted.map(p => p.estEnd),
-    1,
-  )
-
-  // Layout
-  const ML = 90
-  const MR = 20
-  const MT = 16
-  const MB = 44
-  const BAR = 14
-  const BAR_GAP = 2
-  const NODE_PAD = 8 // padding top/bottom within node row
-  const W = 960
-
-  // Each node row height depends on max parallel tasks.
-  function nodeRowHeight(node: string): number {
-    const slots = nodeSlots[node]
-    // Two sets of bars (predicted + actual), each with `slots` sub-rows.
-    return NODE_PAD * 2 + slots * (BAR + BAR_GAP) * 2 + 4
-  }
-
-  const innerW = W - ML - MR
-  let totalInnerH = 0
-  const nodeYOffset: Record<string, number> = {}
-  for (const node of nodes) {
-    nodeYOffset[node] = MT + totalInnerH
-    totalInnerH += nodeRowHeight(node)
-  }
-  const totalH = totalInnerH + MT + MB
-
-  const xs = (t: number) => (t / maxTime) * innerW
-
-  // Assign sub-row indices to overlapping bars on the same node.
-  function assignSubRows(bars: Array<{ name: string; start: number; end: number }>): Record<string, number> {
-    const sorted = [...bars].sort((a, b) => a.start - b.start)
-    const rows: number[] = [] // end time of each sub-row
-    const assignment: Record<string, number> = {}
-    for (const bar of sorted) {
-      let placed = false
-      for (let r = 0; r < rows.length; r++) {
-        if (bar.start >= rows[r]) {
-          rows[r] = bar.end
-          assignment[bar.name] = r
-          placed = true
-          break
-        }
-      }
-      if (!placed) {
-        assignment[bar.name] = rows.length
-        rows.push(bar.end)
-      }
-    }
-    return assignment
-  }
-
-  // Pre-compute sub-row assignments per node.
   const predSubRows: Record<string, Record<string, number>> = {}
   const actSubRows: Record<string, Record<string, number>> = {}
-  for (const node of nodes) {
+  for (const node of a.nodes) {
     predSubRows[node] = assignSubRows(
-      (predictedByNode[node] ?? []).map(p => ({ name: p.name, start: p.estStart, end: p.estEnd }))
+      predicted.filter(p => p.node === node).map(p => ({ name: p.name, start: p.estStart, end: p.estEnd }))
     )
-    actSubRows[node] = assignSubRows(actualByNode[node] ?? [])
+    actSubRows[node] = assignSubRows(actualBars.filter(b => b.node === node))
   }
-
-  // Nice tick values
-  const tickCount = 7
-  const rawStep = maxTime / tickCount
-  const step = Math.ceil(rawStep)
-  const ticks: number[] = []
-  for (let t = 0; t <= maxTime + step; t += step) ticks.push(Math.round(t))
 
   return (
     <div className="overflow-x-auto">
-      <svg
-        viewBox={`0 0 ${W} ${totalH}`}
-        width="100%"
-        style={{ display: 'block', fontFamily: 'inherit' }}
-      >
-        {/* Alternating row backgrounds */}
-        {nodes.map((node, i) => (
+      <svg viewBox={`0 0 ${a.W} ${a.totalH}`} width="100%" style={{ display: 'block', fontFamily: 'inherit' }}>
+        {/* Row backgrounds */}
+        {a.nodes.map((node, i) => (
           <rect
             key={node}
-            x={ML} y={nodeYOffset[node]}
-            width={innerW} height={nodeRowHeight(node)}
+            x={a.ML} y={a.nodeYOffset[node]}
+            width={a.innerW} height={a.nodeHeight[node]}
             fill={i % 2 === 0 ? rowEven() : rowOdd()}
           />
         ))}
 
-        {/* Dashed horizontal lines between node rows */}
-        {nodes.map((node, i) => {
+        {/* Row separators */}
+        {a.nodes.map((node, i) => {
           if (i === 0) return null
           return (
             <line
               key={`sep-${node}`}
-              x1={ML} y1={nodeYOffset[node]}
-              x2={ML + innerW} y2={nodeYOffset[node]}
+              x1={a.ML} y1={a.nodeYOffset[node]}
+              x2={a.ML + a.innerW} y2={a.nodeYOffset[node]}
               stroke={dashStroke()} strokeWidth={1} strokeDasharray="6 4"
             />
           )
         })}
 
-        {/* Vertical grid lines */}
-        {ticks.filter(t => t <= maxTime).map(t => (
+        {/* Vertical grid */}
+        {a.ticks.filter(t => t <= a.maxTime).map(t => (
           <line
             key={t}
-            x1={ML + xs(t)} y1={MT}
-            x2={ML + xs(t)} y2={MT + totalInnerH}
+            x1={a.xs(t)} y1={a.MT}
+            x2={a.xs(t)} y2={a.MT + a.totalInnerH}
             stroke={gridStroke()} strokeWidth={1}
           />
         ))}
 
         {/* Node labels */}
-        {nodes.map(node => (
+        {a.nodes.map(node => (
           <text
             key={node}
-            x={ML - 8}
-            y={nodeYOffset[node] + nodeRowHeight(node) / 2}
+            x={a.ML - 8}
+            y={a.nodeYOffset[node] + a.nodeHeight[node] / 2}
             textAnchor="end"
             dominantBaseline="middle"
             fill={labelFill()}
@@ -218,28 +131,22 @@ export default function GanttChart({ dag }: Props) {
           </text>
         ))}
 
-        {/* Predicted bars (dashed, stacked by sub-row) */}
+        {/* Predicted bars */}
         {predicted.map(p => {
           const color = taskColor(p.name, taskNames)
-          const x = ML + xs(p.estStart)
-          const w = Math.max(xs(p.estEnd - p.estStart), 3)
+          const x = a.xs(p.estStart)
+          const w = Math.max(a.xs(p.estEnd) - a.xs(p.estStart), 3)
           const subRow = predSubRows[p.node]?.[p.name] ?? 0
-          const y = nodeYOffset[p.node] + NODE_PAD + subRow * (BAR + BAR_GAP)
+          const y = a.execPredY(p.node) + subRow * (a.BAR + a.BAR_GAP)
           return (
             <g key={`pred-${p.name}`}>
               <rect
-                x={x} y={y} width={w} height={BAR}
+                x={x} y={y} width={w} height={a.BAR}
                 fill={color} fillOpacity={0.18}
                 stroke={color} strokeWidth={1.5} strokeDasharray="5 3"
                 rx={2}
               />
-              <text
-                x={x + 4} y={y + BAR / 2}
-                dominantBaseline="middle"
-                fill={color} fillOpacity={0.8}
-                fontSize={9}
-                style={{ pointerEvents: 'none' }}
-              >
+              <text x={x + 4} y={y + a.BAR / 2} dominantBaseline="middle" fill={color} fillOpacity={0.8} fontSize={9} style={{ pointerEvents: 'none' }}>
                 {p.name}
               </text>
               <title>{`${p.name} predicted: ${p.estStart.toFixed(1)}s – ${p.estEnd.toFixed(1)}s (${p.node})`}</title>
@@ -247,31 +154,17 @@ export default function GanttChart({ dag }: Props) {
           )
         })}
 
-        {/* Actual bars (solid, stacked by sub-row) */}
+        {/* Actual bars */}
         {actualBars.map(b => {
           const color = taskColor(b.name, taskNames)
-          const x = ML + xs(b.start)
-          const w = Math.max(xs(b.end - b.start), 3)
-          const slots = nodeSlots[b.node]
+          const x = a.xs(b.start)
+          const w = Math.max(a.xs(b.end) - a.xs(b.start), 3)
           const subRow = actSubRows[b.node]?.[b.name] ?? 0
-          // Actual bars go below predicted bars.
-          const predHeight = slots * (BAR + BAR_GAP)
-          const y = nodeYOffset[b.node] + NODE_PAD + predHeight + 4 + subRow * (BAR + BAR_GAP)
+          const y = a.execActualY(b.node) + subRow * (a.BAR + a.BAR_GAP)
           return (
             <g key={`actual-${b.name}`}>
-              <rect
-                x={x} y={y} width={w} height={BAR}
-                fill={color} fillOpacity={0.9}
-                rx={2}
-              />
-              <text
-                x={x + 4} y={y + BAR / 2}
-                dominantBaseline="middle"
-                fill={barTextDark()}
-                fontWeight="bold"
-                fontSize={9}
-                style={{ pointerEvents: 'none' }}
-              >
+              <rect x={x} y={y} width={w} height={a.BAR} fill={color} fillOpacity={0.9} rx={2} />
+              <text x={x + 4} y={y + a.BAR / 2} dominantBaseline="middle" fill={barTextDark()} fontWeight="bold" fontSize={9} style={{ pointerEvents: 'none' }}>
                 {b.name}
               </text>
               <title>{`${b.name} actual: ${b.start.toFixed(1)}s – ${b.end.toFixed(1)}s (${b.node})`}</title>
@@ -279,36 +172,18 @@ export default function GanttChart({ dag }: Props) {
           )
         })}
 
-        {/* X axis line */}
-        <line
-          x1={ML} y1={MT + totalInnerH}
-          x2={ML + innerW} y2={MT + totalInnerH}
-          stroke={axisStroke()} strokeWidth={1}
-        />
-
-        {/* X axis ticks + labels */}
-        {ticks.filter(t => t <= maxTime + step).map(t => (
+        {/* X axis */}
+        <line x1={a.ML} y1={a.MT + a.totalInnerH} x2={a.ML + a.innerW} y2={a.MT + a.totalInnerH} stroke={axisStroke()} strokeWidth={1} />
+        {a.ticks.filter(t => t <= a.maxTime + 1e-6).map(t => (
           <g key={`xtick-${t}`}>
-            <line
-              x1={ML + xs(t)} y1={MT + totalInnerH}
-              x2={ML + xs(t)} y2={MT + totalInnerH + 5}
-              stroke={axisStroke()}
-            />
-            <text
-              x={ML + xs(t)} y={MT + totalInnerH + 16}
-              textAnchor="middle"
-              fill={tickFill()}
-              fontSize={10}
-            >
-              {t}s
-            </text>
+            <line x1={a.xs(t)} y1={a.MT + a.totalInnerH} x2={a.xs(t)} y2={a.MT + a.totalInnerH + 5} stroke={axisStroke()} />
+            <text x={a.xs(t)} y={a.MT + a.totalInnerH + 16} textAnchor="middle" fill={tickFill()} fontSize={10}>{t}s</text>
           </g>
         ))}
 
         {/* Legend */}
-        <g transform={`translate(${ML}, ${MT + totalInnerH + 30})`}>
-          <rect x={0} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.18}
-            stroke="#9ca3af" strokeDasharray="5 3" strokeWidth={1.5} rx={1} />
+        <g transform={`translate(${a.ML}, ${a.MT + a.totalInnerH + 30})`}>
+          <rect x={0} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.18} stroke="#9ca3af" strokeDasharray="5 3" strokeWidth={1.5} rx={1} />
           <text x={20} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Predicted</text>
           <rect x={90} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.9} rx={1} />
           <text x={110} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Actual</text>

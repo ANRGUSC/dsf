@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math"
 	"sort"
 )
 
@@ -130,6 +131,228 @@ func (nt *nodeTimeline) commit(taskName string, start, end float64, cpuMillis, m
 	})
 }
 
+// --------------------------------------------------------------------------
+// Network flow timeline — TCP fair-sharing bandwidth contention model
+// --------------------------------------------------------------------------
+//
+// When multiple data transfers share a node's egress or ingress NIC,
+// TCP fair-sharing gives each flow approximately BW/N. This timeline
+// tracks committed transfers and simulates new ones under contention.
+
+// networkFlow represents a committed data transfer occupying bandwidth.
+type networkFlow struct {
+	srcNode  string
+	dstNode  string
+	start    float64 // seconds
+	end      float64 // seconds
+	taskName string  // source task (for logging)
+}
+
+// networkTimeline tracks committed data transfers for contention modelling.
+type networkTimeline struct {
+	flows []networkFlow
+}
+
+// commitFlow records a completed transfer in the timeline.
+func (nt *networkTimeline) commitFlow(srcNode, dstNode, taskName string, start, end float64) {
+	nt.flows = append(nt.flows, networkFlow{
+		srcNode: srcNode, dstNode: dstNode,
+		start: start, end: end, taskName: taskName,
+	})
+}
+
+// pendingTransfer describes a data transfer to be simulated.
+type pendingTransfer struct {
+	srcNode  string
+	dstNode  string
+	start    float64 // earliest time the transfer can begin
+	dataSize int64   // bytes
+	taskName string
+}
+
+// transferResult holds the simulated timing for a pending transfer.
+type transferResult struct {
+	srcNode  string
+	dstNode  string
+	start    float64
+	end      float64
+	dataSize int64
+	taskName string
+}
+
+// simulateTransfers computes the end time for each pending transfer,
+// accounting for TCP fair-sharing of bandwidth with committed flows
+// and among the pending transfers themselves.
+//
+// At any point in time, if N flows share a node's egress (or ingress),
+// each flow gets linkBW/N. The simulation advances through time boundaries
+// where the number of concurrent flows changes, recomputing effective
+// bandwidth at each interval.
+func (nt *networkTimeline) simulateTransfers(
+	pending []pendingTransfer,
+	bwFunc func(src, dst string) float64,
+) []transferResult {
+	if len(pending) == 0 {
+		return nil
+	}
+
+	type xferState struct {
+		p         pendingTransfer
+		remaining float64
+		linkBW    float64
+		endTime   float64
+		done      bool
+	}
+
+	states := make([]xferState, len(pending))
+	for i, p := range pending {
+		bw := bwFunc(p.srcNode, p.dstNode)
+		states[i] = xferState{p: p, remaining: float64(p.dataSize), linkBW: bw}
+		if p.dataSize <= 0 || bw <= 0 {
+			states[i].done = true
+			states[i].remaining = 0
+			states[i].endTime = p.start
+		}
+	}
+
+	// Find earliest start.
+	t := math.MaxFloat64
+	for _, s := range states {
+		if !s.done && s.p.start < t {
+			t = s.p.start
+		}
+	}
+	if t == math.MaxFloat64 {
+		// All zero-size or zero-bandwidth.
+		results := make([]transferResult, len(states))
+		for i, s := range states {
+			results[i] = transferResult{
+				srcNode: s.p.srcNode, dstNode: s.p.dstNode,
+				start: s.p.start, end: s.p.start,
+				dataSize: s.p.dataSize, taskName: s.p.taskName,
+			}
+		}
+		return results
+	}
+
+	for iter := 0; iter < 10000; iter++ {
+		// Check completion.
+		allDone := true
+		for _, s := range states {
+			if !s.done {
+				allDone = false
+				break
+			}
+		}
+		if allDone {
+			break
+		}
+
+		// Jump to next pending start if nothing is active yet.
+		anyActive := false
+		nextStart := math.MaxFloat64
+		for _, s := range states {
+			if s.done {
+				continue
+			}
+			if t >= s.p.start {
+				anyActive = true
+			} else if s.p.start < nextStart {
+				nextStart = s.p.start
+			}
+		}
+		if !anyActive {
+			t = nextStart
+			continue
+		}
+
+		// Count concurrent flows per node at time t.
+		egressN := make(map[string]int)
+		ingressN := make(map[string]int)
+		for _, f := range nt.flows {
+			if f.start <= t && t < f.end {
+				egressN[f.srcNode]++
+				ingressN[f.dstNode]++
+			}
+		}
+		for _, s := range states {
+			if !s.done && t >= s.p.start {
+				egressN[s.p.srcNode]++
+				ingressN[s.p.dstNode]++
+			}
+		}
+
+		// Next event: committed flow boundary, pending start, or pending finish.
+		nextEvent := math.MaxFloat64
+		for _, f := range nt.flows {
+			if f.start > t && f.start < nextEvent {
+				nextEvent = f.start
+			}
+			if f.end > t && f.end < nextEvent {
+				nextEvent = f.end
+			}
+		}
+		for _, s := range states {
+			if !s.done && s.p.start > t && s.p.start < nextEvent {
+				nextEvent = s.p.start
+			}
+		}
+		for _, s := range states {
+			if s.done || t < s.p.start {
+				continue
+			}
+			nE := egressN[s.p.srcNode]
+			nI := ingressN[s.p.dstNode]
+			effBW := min(s.linkBW/float64(nE), s.linkBW/float64(nI))
+			if effBW <= 0 {
+				continue
+			}
+			if finish := t + s.remaining/effBW; finish < nextEvent {
+				nextEvent = finish
+			}
+		}
+
+		if nextEvent <= t {
+			break // safety valve
+		}
+
+		// Advance time, deducting transferred bytes.
+		dt := nextEvent - t
+		for i := range states {
+			if states[i].done || t < states[i].p.start {
+				continue
+			}
+			nE := egressN[states[i].p.srcNode]
+			nI := ingressN[states[i].p.dstNode]
+			effBW := min(states[i].linkBW/float64(nE), states[i].linkBW/float64(nI))
+			states[i].remaining -= effBW * dt
+			if states[i].remaining < 1.0 { // < 1 byte → done
+				states[i].remaining = 0
+				states[i].done = true
+				states[i].endTime = nextEvent
+			}
+		}
+		t = nextEvent
+	}
+
+	// Safety: mark anything still running as finishing now.
+	for i := range states {
+		if !states[i].done {
+			states[i].endTime = t
+		}
+	}
+
+	results := make([]transferResult, len(states))
+	for i, s := range states {
+		results[i] = transferResult{
+			srcNode: s.p.srcNode, dstNode: s.p.dstNode,
+			start: s.p.start, end: s.endTime,
+			dataSize: s.p.dataSize, taskName: s.p.taskName,
+		}
+	}
+	return results
+}
+
 // parseTaskCPUMillis parses "500m" → 500, "2" → 2000, "" → 0.
 func parseTaskCPUMillis(s string) int64 {
 	if s == "" {
@@ -161,15 +384,27 @@ type heftScheduleEntry struct {
 	EstEnd   float64
 }
 
+// heftFlowEntry is an internal per-edge flow record produced by HEFT.
+type heftFlowEntry struct {
+	FromTask string
+	ToTask   string
+	SrcNode  string
+	DstNode  string
+	Start    float64
+	End      float64
+	DataSize int64
+}
+
 // heftResult holds both the node assignment map and the predicted schedule.
 type heftResult struct {
 	assignMap map[string]nodeInfo
 	schedule  map[string]heftScheduleEntry
+	flows     []heftFlowEntry
 }
 
 func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) heftResult {
 	if len(tasks) == 0 {
-		return heftResult{assignMap: map[string]nodeInfo{}, schedule: map[string]heftScheduleEntry{}}
+		return heftResult{assignMap: map[string]nodeInfo{}, schedule: map[string]heftScheduleEntry{}, flows: []heftFlowEntry{}}
 	}
 
 	taskByName := make(map[string]*taskSpec, len(tasks))
@@ -291,10 +526,14 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 		}
 	}
 
+	// Network flow timeline for bandwidth contention.
+	netTimeline := &networkTimeline{}
+
 	taskFinish := make(map[string]float64, len(tasks))
 	taskAssigned := make(map[string]string, len(tasks))
 	result := make(map[string]nodeInfo, len(tasks))
 	schedule := make(map[string]heftScheduleEntry, len(tasks))
+	flows := make([]heftFlowEntry, 0)
 
 	for _, name := range sorted {
 		t := taskByName[name]
@@ -325,27 +564,49 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 
 		bestNode := ""
 		bestEFT := -1.0
+		var bestTransfers []transferResult
 
 		for _, nodeName := range candidates {
 			tl := timelines[nodeName]
 
-			// Minimum start: all deps must be done + comm cost.
+			// Build pending transfers from deps to this candidate node.
+			var pending []pendingTransfer
 			depsReady := 0.0
 			for _, dep := range t.Dependencies {
 				depFinish := taskFinish[dep]
 				depNode := taskAssigned[dep]
 
-				var commCost float64
 				if depNode != "" && depNode == nodeName {
-					commCost = 0
+					// Same node — no network transfer.
+					if depFinish > depsReady {
+						depsReady = depFinish
+					}
 				} else {
 					bytes := resolveDataSizeBytes(dep, depNode)
-					bw := resolveBandwidth(depNode, nodeName)
-					commCost = float64(bytes) / bw
+					if bytes > 0 {
+						pending = append(pending, pendingTransfer{
+							srcNode:  depNode,
+							dstNode:  nodeName,
+							start:    depFinish,
+							dataSize: bytes,
+							taskName: dep,
+						})
+					} else {
+						if depFinish > depsReady {
+							depsReady = depFinish
+						}
+					}
 				}
+			}
 
-				if ready := depFinish + commCost; ready > depsReady {
-					depsReady = ready
+			// Simulate transfers with bandwidth contention (TCP fair-sharing).
+			var transfers []transferResult
+			if len(pending) > 0 {
+				transfers = netTimeline.simulateTransfers(pending, resolveBandwidth)
+				for _, tr := range transfers {
+					if tr.end > depsReady {
+						depsReady = tr.end
+					}
 				}
 			}
 
@@ -357,6 +618,37 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 			if bestNode == "" || eft < bestEFT {
 				bestNode = nodeName
 				bestEFT = eft
+				bestTransfers = transfers
+			}
+		}
+
+		// Commit network transfers for the chosen node.
+		for _, tr := range bestTransfers {
+			if tr.end > tr.start {
+				netTimeline.commitFlow(tr.srcNode, tr.dstNode, tr.taskName, tr.start, tr.end)
+			}
+			flows = append(flows, heftFlowEntry{
+				FromTask: tr.taskName,
+				ToTask:   name,
+				SrcNode:  tr.srcNode,
+				DstNode:  tr.dstNode,
+				Start:    tr.start,
+				End:      tr.end,
+				DataSize: tr.dataSize,
+			})
+		}
+		// Log contention effects on transfers.
+		for _, tr := range bestTransfers {
+			linkBW := resolveBandwidth(tr.srcNode, tr.dstNode)
+			if linkBW > 0 {
+				naiveDur := float64(tr.dataSize) / linkBW
+				actualDur := tr.end - tr.start
+				if actualDur > naiveDur*1.01 {
+					log.Printf("[heft]   xfer %s->%s (dep %s): %.1fMB naive=%.2fs actual=%.2fs (%.0f%% slower from contention)",
+						tr.srcNode, tr.dstNode, tr.taskName,
+						float64(tr.dataSize)/1e6, naiveDur, actualDur,
+						(actualDur/naiveDur-1)*100)
+				}
 			}
 		}
 
@@ -376,7 +668,7 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 			name, rank[name], bestNode, estFinal, bestEFT, taskCPU, taskMem/(1<<20))
 	}
 
-	return heftResult{assignMap: result, schedule: schedule}
+	return heftResult{assignMap: result, schedule: schedule, flows: flows}
 }
 
 // computeAvgBandwidth returns the mean bandwidth across all distinct node pairs.

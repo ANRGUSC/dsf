@@ -6,6 +6,9 @@ import CDAGDetail from '@/pages/CDAGDetail'
 import TemplateList from '@/pages/TemplateList'
 import TemplateDetail from '@/pages/TemplateDetail'
 import CDAGTemplateDetail from '@/pages/CDAGTemplateDetail'
+import Cluster from '@/pages/Cluster'
+import Compare from '@/pages/Compare'
+import BatchExecution from '@/pages/BatchExecution'
 import { useSSE } from '@/hooks/useSSE'
 import { useTheme } from '@/hooks/useTheme'
 
@@ -22,6 +25,9 @@ function AppRoutes() {
       <Route path="/templates/cdag/:namespace/:name" element={<CDAGTemplateDetail />} />
       <Route path="/cdags" element={<CDAGList />} />
       <Route path="/cdags/:namespace/:name" element={<CDAGDetail />} />
+      <Route path="/cluster" element={<Cluster />} />
+      <Route path="/compare" element={<Compare />} />
+      <Route path="/batch" element={<BatchExecution />} />
     </Routes>
   )
 }
@@ -73,6 +79,22 @@ export default function App() {
               }
             >
               CDAGs
+            </NavLink>
+            <NavLink
+              to="/cluster"
+              className={({ isActive }) =>
+                isActive ? 'text-on' : 'text-on-muted hover:text-on-secondary'
+              }
+            >
+              Cluster
+            </NavLink>
+            <NavLink
+              to="/compare"
+              className={({ isActive }) =>
+                isActive ? 'text-on' : 'text-on-muted hover:text-on-secondary'
+              }
+            >
+              Compare
             </NavLink>
           </nav>
           <button

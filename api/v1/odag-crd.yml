@@ -150,6 +150,55 @@ spec:
                       estEnd:
                         type: number
                         description: Estimated finish time in seconds from t=0.
+                predictedNetworkFlows:
+                  type: array
+                  description: Per-edge predicted network transfers under TCP fair-sharing contention.
+                  items:
+                    type: object
+                    properties:
+                      fromTask:
+                        type: string
+                      toTask:
+                        type: string
+                      srcNode:
+                        type: string
+                      dstNode:
+                        type: string
+                      start:
+                        type: number
+                        description: Transfer start time in seconds from t=0.
+                      end:
+                        type: number
+                        description: Transfer end time in seconds from t=0.
+                      dataSize:
+                        type: integer
+                        description: Bytes transferred.
+                        format: int64
+                actualNetworkFlows:
+                  type: array
+                  description: Per-push observed network transfers recorded by the sender's data-agent.
+                  items:
+                    type: object
+                    properties:
+                      fromTask:
+                        type: string
+                      toTask:
+                        type: string
+                      srcNode:
+                        type: string
+                      dstNode:
+                        type: string
+                      start:
+                        type: number
+                        description: Observed wire start, seconds from ODAG startTime.
+                      end:
+                        type: number
+                        description: Observed wire end, seconds from ODAG startTime.
+                      dataSize:
+                        type: integer
+                        format: int64
+                      ok:
+                        type: boolean
       subresources:
         status: {}
       additionalPrinterColumns:

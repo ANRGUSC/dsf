@@ -36,9 +36,32 @@ export interface PredictedTask {
   estEnd: number
 }
 
+export interface PredictedNetworkFlow {
+  fromTask: string
+  toTask: string
+  srcNode: string
+  dstNode: string
+  start: number
+  end: number
+  dataSize: number
+}
+
+export interface ActualNetworkFlow {
+  fromTask: string
+  toTask: string
+  srcNode: string
+  dstNode: string
+  start: number
+  end: number
+  dataSize: number
+  ok: boolean
+}
+
 export interface ODAGDetail extends ODAGSummary {
   tasks: TaskStatus[]
   predictedTasks?: PredictedTask[]
+  predictedNetworkFlows?: PredictedNetworkFlow[]
+  actualNetworkFlows?: ActualNetworkFlow[]
   spec: {
     tasks: Array<{
       name: string
@@ -145,6 +168,68 @@ export interface TemplateRun {
   createdAt: string
 }
 
+export interface TemplateHistoryEntry {
+  name: string
+  runId: string
+  phase: string
+  makespan: number
+  startTime: string
+  completionTime: string
+}
+
+export interface CDAGPlacement {
+  task: string
+  node: string
+  ts: number
+}
+
+export interface CDAGReplicaMetrics {
+  pod: string
+  node: string
+  error?: string
+  metrics?: {
+    taskName?: string
+    nodeName?: string
+    uptimeSeconds?: number
+    windowSeconds?: number
+    send?: { msgs: number; msgsPerSec: number; bytes: number; bytesPerSec: number }
+    recv?: Record<string, {
+      msgs: number
+      msgsPerSec: number
+      bytes: number
+      bytesPerSec: number
+      lastLatencySeconds: number | null
+      avgLatencySeconds: number | null
+      maxLatencySeconds: number | null
+    }>
+  }
+}
+
+export interface CDAGTaskMetrics {
+  task: string
+  replicas: CDAGReplicaMetrics[]
+}
+
+export interface ClusterNode {
+  name: string
+  ready: boolean
+  schedulable: boolean
+  roles: string
+  internalIP: string
+  kubeletVersion: string
+  allocCPUMillis: number
+  allocMemBytes: number
+  usedCPUMillis: number
+  usedMemBytes: number
+  cpuPct: number
+  memPct: number
+  totalPods: number
+  odagTasks: number
+  cdagTasks: number
+  runningOdagTasks: number
+  runningCdagTasks: number
+}
+
 export interface CDAGTemplateSummary {
   name: string
   namespace: string
@@ -231,6 +316,18 @@ export const api = {
 
   getTemplateRuns: (namespace: string, name: string): Promise<TemplateRun[]> =>
     get(`/api/templates/${namespace}/${name}/runs`),
+
+  getTemplateHistory: (namespace: string, name: string): Promise<TemplateHistoryEntry[]> =>
+    get(`/api/templates/${namespace}/${name}/history`),
+
+  getClusterNodes: (): Promise<ClusterNode[]> =>
+    get('/api/cluster/nodes'),
+
+  getCDAGPlacements: (namespace: string, name: string): Promise<CDAGPlacement[]> =>
+    get(`/api/cdags/${namespace}/${name}/placements`),
+
+  getCDAGMetrics: (namespace: string, name: string): Promise<CDAGTaskMetrics[]> =>
+    get(`/api/cdags/${namespace}/${name}/metrics`),
 
   runTemplate: (namespace: string, name: string): Promise<{ name: string; run: number; message: string }> =>
     fetch(`/api/templates/${namespace}/${name}/run`, { method: 'POST' })

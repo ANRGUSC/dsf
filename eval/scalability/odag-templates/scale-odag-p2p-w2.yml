@@ -4,7 +4,7 @@ metadata:
   name: scale-odag-p2p-w2
   namespace: dsf-system
 spec:
-  description: 'Scalability eval: P2P transport, 2 workers, 50MB per task'
+  description: 'Scalability eval: 2 workers, 50MB, 2-3 node choices per worker'
   scheduler: random
   profiling:
     enabled: false
@@ -12,7 +12,7 @@ spec:
     runtime: 2
     dataSize: '50000000'
   retention:
-    maxRuns: 10
+    maxRuns: 15
   tasks:
   - name: source
     image: 192.168.1.163:5000/scalability-eval:latest
@@ -47,11 +47,9 @@ spec:
       cpu: 300m
       memory: 256Mi
     constraints:
-      nodeNames: &id001
+      nodeNames:
       - anrg-3
-      - anrg-4
       - anrg-5
-      - anrg-6
   - name: worker-2
     image: 192.168.1.163:5000/scalability-eval:latest
     command:
@@ -68,7 +66,10 @@ spec:
       cpu: 300m
       memory: 256Mi
     constraints:
-      nodeNames: *id001
+      nodeNames:
+      - anrg-3
+      - anrg-4
+      - anrg-5
   - name: sink
     image: 192.168.1.163:5000/scalability-eval:latest
     command:
@@ -79,9 +80,10 @@ spec:
     - worker-2
     dataSize: '0'
     runtime: 1
-    env: []
     resources:
       cpu: 300m
       memory: 512Mi
     constraints:
-      nodeNames: *id001
+      nodeNames:
+      - anrg-4
+      - anrg-5

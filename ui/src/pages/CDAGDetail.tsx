@@ -4,8 +4,10 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import StatusBadge from '@/components/StatusBadge'
 import CDAGGraph from '@/components/CDAGGraph'
+import CDAGPlacementTimeline from '@/components/CDAGPlacementTimeline'
+import CDAGMetricsView from '@/components/CDAGMetricsView'
 
-type Tab = 'graph' | 'tasks' | 'spec'
+type Tab = 'graph' | 'tasks' | 'schedule' | 'metrics' | 'spec'
 
 export default function CDAGDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>()
@@ -14,6 +16,21 @@ export default function CDAGDetail() {
   const { data: cdag, isLoading, error } = useQuery({
     queryKey: ['cdag', namespace, name],
     queryFn: () => api.getCDAG(namespace!, name!),
+    refetchInterval: 5000,
+  })
+
+  const { data: placements } = useQuery({
+    queryKey: ['cdag-placements', namespace, name],
+    queryFn: () => api.getCDAGPlacements(namespace!, name!),
+    enabled: tab === 'schedule' && !!namespace && !!name,
+    refetchInterval: tab === 'schedule' ? 5000 : false,
+  })
+
+  const { data: metrics } = useQuery({
+    queryKey: ['cdag-metrics', namespace, name],
+    queryFn: () => api.getCDAGMetrics(namespace!, name!),
+    enabled: tab === 'metrics' && !!namespace && !!name,
+    refetchInterval: tab === 'metrics' ? 2000 : false,
   })
 
   if (isLoading) return <p className="text-on-muted">Loading...</p>
@@ -38,7 +55,7 @@ export default function CDAGDetail() {
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-line mb-6 text-sm">
-        {(['graph', 'tasks', 'spec'] as Tab[]).map(t => (
+        {(['graph', 'tasks', 'schedule', 'metrics', 'spec'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -51,6 +68,12 @@ export default function CDAGDetail() {
 
       {/* Graph tab */}
       {tab === 'graph' && <CDAGGraph cdag={cdag} />}
+
+      {/* Schedule tab — rolling placement timeline */}
+      {tab === 'schedule' && <CDAGPlacementTimeline cdag={cdag} placements={placements ?? []} />}
+
+      {/* Metrics tab — live throughput/latency */}
+      {tab === 'metrics' && <CDAGMetricsView data={metrics ?? []} />}
 
       {/* Tasks tab — live replica status */}
       {tab === 'tasks' && (
