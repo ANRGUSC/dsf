@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mct-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mct-controller
+  template:
+    metadata:
+      labels:
+        app: mct-controller
+    spec:
+      serviceAccountName: mct-controller
+      containers:
+        - name: mct-controller
+          image: mohammadalikh/mct-controller:latest
+          args:
+            - "--kubeconfig="
+          imagePullPolicy: Always

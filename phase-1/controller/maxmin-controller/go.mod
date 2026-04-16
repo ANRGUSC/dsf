@@ -1,4 +1,4 @@
-module cpop-controller
+module maxmin-controller
 
 go 1.24.0
 

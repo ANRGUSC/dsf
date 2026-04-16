@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: met-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: met-controller
+  template:
+    metadata:
+      labels:
+        app: met-controller
+    spec:
+      serviceAccountName: met-controller
+      containers:
+        - name: met-controller
+          image: mohammadalikh/met-controller:latest
+          args:
+            - "--kubeconfig="
+          imagePullPolicy: Always

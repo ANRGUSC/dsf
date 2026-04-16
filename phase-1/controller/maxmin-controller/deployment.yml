@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maxmin-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maxmin-controller
+  template:
+    metadata:
+      labels:
+        app: maxmin-controller
+    spec:
+      serviceAccountName: maxmin-controller
+      containers:
+        - name: maxmin-controller
+          image: mohammadalikh/maxmin-controller:latest
+          args:
+            - "--kubeconfig="
+          imagePullPolicy: Always

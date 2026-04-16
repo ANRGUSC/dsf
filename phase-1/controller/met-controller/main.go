@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 
@@ -31,12 +30,11 @@ const (
 	DataOutputPath    = "/data/dag-outputs"
 )
 
-// CPOP-specific structures
-type CPOPSchedule struct {
+// MET-specific structures
+type METSchedule struct {
 	mu              sync.RWMutex
 	taskAssignments map[string]map[string]string  // dagName -> taskName -> nodeName
-	taskRanks       map[string]map[string]float64 // dagName -> taskName -> rank
-	taskEFTs        map[string]map[string]float64 // dagName -> taskName -> EFT
+	taskECTs        map[string]map[string]float64 // dagName -> taskName -> ECT
 }
 
 type NodeInfo struct {
@@ -47,10 +45,9 @@ type NodeInfo struct {
 	UsedMemory        int64
 }
 
-var cpopSchedule = &CPOPSchedule{
+var metSchedule = &METSchedule{
 	taskAssignments: make(map[string]map[string]string),
-	taskRanks:       make(map[string]map[string]float64),
-	taskEFTs:        make(map[string]map[string]float64),
+	taskECTs:        make(map[string]map[string]float64),
 }
 
 func main() {
@@ -116,7 +113,7 @@ func main() {
 	dagController.Run(stop)
 }
 
-// Watch for DAG resources and compute CPOP schedule
+// Watch for DAG resources and compute MET schedule
 func watchDAGs(dynamicClient dynamic.Interface, client *kubernetes.Clientset, cfg *rest.Config) {
 	dagGVR := schema.GroupVersionResource{
 		Group:    "workflow.example.com",
@@ -134,8 +131,8 @@ func watchDAGs(dynamicClient dynamic.Interface, client *kubernetes.Clientset, cf
 		switch event.Type {
 		case "ADDED":
 			obj := event.Object.(*unstructured.Unstructured)
-			log.Printf("New DAG detected: %s - Computing CPOP schedule", obj.GetName())
-			computeCPOPSchedule(client, obj, cfg)
+			log.Printf("New DAG detected: %s - Computing MET schedule", obj.GetName())
+			computeMETSchedule(client, obj, cfg)
 			processDAG(client, obj, cfg)
 		case "MODIFIED":
 			obj := event.Object.(*unstructured.Unstructured)
@@ -145,8 +142,11 @@ func watchDAGs(dynamicClient dynamic.Interface, client *kubernetes.Clientset, cf
 	}
 }
 
-// Compute CPOP schedule for entire DAG upfront
-func computeCPOPSchedule(client *kubernetes.Clientset, obj *unstructured.Unstructured, cfg *rest.Config) {
+// Compute MET schedule for entire DAG upfront
+// MET: Process tasks in topological order. For each task, pick the node
+// with the minimum EXECUTION TIME (computation cost only), ignoring
+// node availability and communication costs in the node selection.
+func computeMETSchedule(client *kubernetes.Clientset, obj *unstructured.Unstructured, cfg *rest.Config) {
 	dagName := obj.GetName()
 	steps, _, _ := unstructured.NestedSlice(obj.Object, "spec", "steps")
 
@@ -157,195 +157,130 @@ func computeCPOPSchedule(client *kubernetes.Clientset, obj *unstructured.Unstruc
 		return
 	}
 
-	log.Printf("[CPOP] Computing schedule for DAG %s with %d tasks", dagName, len(steps))
+	log.Printf("[MET] Computing schedule for DAG %s with %d tasks on %d nodes", dagName, len(steps), len(allNodes))
 
-	// Build task map for easy lookup (includes constraints)
+	// Build task map and constraints
 	taskMap := make(map[string]map[string]interface{})
-	taskConstraints := make(map[string][]string) // taskName -> allowed nodes
+	taskConstraints := make(map[string][]string)
 
 	for _, stepObj := range steps {
 		step := stepObj.(map[string]interface{})
 		stepName, _ := step["name"].(string)
 		taskMap[stepName] = step
 
-		// Get constraints for this step
 		nodeNames, _, _ := unstructured.NestedStringSlice(step, "constraints", "nodeNames")
 		if len(nodeNames) > 0 {
 			taskConstraints[stepName] = nodeNames
-			log.Printf("[CPOP] Task %s constrained to nodes: %v", stepName, nodeNames)
+			log.Printf("[MET] Task %s constrained to nodes: %v", stepName, nodeNames)
 		}
 	}
 
-	// 1. Calculate average computation costs (only considering allowed nodes)
-	avgCompCosts := make(map[string]float64)
-	for taskName, task := range taskMap {
+	// Get topological order
+	topoOrder := topologicalSort(taskMap)
+	log.Printf("[MET] Topological order: %v", topoOrder)
+
+	// Schedule tasks in topological order
+	assignments := make(map[string]string)
+	taskECTs := make(map[string]float64)
+	nodeAvailTime := make(map[string]float64)
+
+	for _, taskName := range topoOrder {
+		task := taskMap[taskName]
+
+		// Get allowed nodes
 		allowedNodes := getNodesForTask(taskName, taskConstraints, allNodes)
 		if len(allowedNodes) == 0 {
-			log.Printf("[CPOP] Warning: No valid nodes for task %s, using all nodes", taskName)
+			log.Printf("[MET] Warning: No valid nodes for task %s, using all nodes", taskName)
 			allowedNodes = allNodes
 		}
 
-		costs := make([]float64, 0)
+		// MET: Pick node with minimum EXECUTION TIME (computation cost only)
+		bestNode := ""
+		bestExecTime := math.MaxFloat64
+
 		for _, node := range allowedNodes {
-			cost := calculateComputationCost(task, node)
-			costs = append(costs, cost)
-		}
-		avgCompCosts[taskName] = average(costs)
-	}
-
-	// 2. Calculate Ranks
-	upwardRanks := make(map[string]float64)
-	calculateUpwardRank(taskMap, avgCompCosts, upwardRanks)
-
-	downwardRanks := make(map[string]float64)
-	calculateDownwardRank(taskMap, avgCompCosts, downwardRanks)
-
-
-
-	// 3. Calculate CPOP Priority (Up + Down) and find critical path rank
-
-	priorityRanks := make(map[string]float64)
-	maxPriority := 0.0
-
-	for taskName := range taskMap {
-		p := upwardRanks[taskName] + downwardRanks[taskName]
-		priorityRanks[taskName] = p
-
-		if p > maxPriority {
-			maxPriority = p
-		}
-	}
-
-	// 4. Identify Critical Path Tasks
-	// In CPOP, any task with Priority == MaxPriority (approx) is on the Critical Path
-	criticalPathTasks := make(map[string]bool)
-	var cpTaskNames []string // list for easy iteration later
-	
-	for taskName, p := range priorityRanks {
-		// Use a small epsilon for float comparison
-		if math.Abs(p - maxPriority) < 0.0001 {
-			criticalPathTasks[taskName] = true
-			cpTaskNames = append(cpTaskNames, taskName)
-		}
-	}
-	log.Printf("[CPOP] Critical Path Tasks: %v", cpTaskNames)
-	// 5. Select the "Critical Path Node" (CP Node)
-	// The node that minimizes total execution time for ALL critical path tasks
-	bestCPNode := ""
-	minCPTotalCost := math.MaxFloat64
-
-	for _, node := range allNodes {
-		totalCost := 0.0
-		validNode := true
-		
-		for _, taskName := range cpTaskNames {
-			// Check constraints: If a CP task CANNOT run on this node, this node cannot be the CP Node
-			allowed := getNodesForTask(taskName, taskConstraints, allNodes)
-			isAllowed := false
-			for _, n := range allowed {
-				if n.Name == node.Name { isAllowed = true; break }
-			}
-			if !isAllowed {
-				validNode = false
-				break
-			}
-
-			totalCost += calculateComputationCost(taskMap[taskName], node)
-		}
-
-		if validNode && totalCost < minCPTotalCost {
-			minCPTotalCost = totalCost
-			bestCPNode = node.Name
-		}
-	}
-	log.Printf("[CPOP] Selected Critical Path Node: %s (Total Cost: %.2f)", bestCPNode, minCPTotalCost)
-
-	// 6. Sort Tasks by Priority (Highest First)
-	sortedTasks := make([]string, 0, len(priorityRanks))
-	for task := range priorityRanks {
-		sortedTasks = append(sortedTasks, task)
-	}
-	sort.Slice(sortedTasks, func(i, j int) bool {
-		return priorityRanks[sortedTasks[i]] > priorityRanks[sortedTasks[j]]
-	})
-
-	// 7. Scheduling Loop
-	assignments := make(map[string]string)
-	taskEFTs := make(map[string]float64)
-	taskStartTimes := make(map[string]float64)
-	nodeAvailTime := make(map[string]float64)
-
-	for _, taskName := range sortedTasks {
-		task := taskMap[taskName]
-		
-		var bestNode string
-		var bestEFT float64
-
-		// LOGIC BRANCH: Is this a Critical Path Task?
-		if criticalPathTasks[taskName] {
-			// FORCE assignment to CP Node
-			bestNode = bestCPNode
-			
-			// We still calculate EFT for bookkeeping, but we don't compare nodes
-			// We need the node object for the calculation function
-			var nodeObj NodeInfo
-			for _, n := range allNodes {
-				if n.Name == bestNode { nodeObj = n; break }
-			}
-			
-			bestEFT = calculateEFT(task, nodeObj, taskMap, assignments, taskStartTimes, taskEFTs, nodeAvailTime)
-
-		} else {
-			// STANDARD CPOP LOGIC for non-critical tasks
-			allowedNodes := getNodesForTask(taskName, taskConstraints, allNodes)
-			bestEFT = math.MaxFloat64
-
-			for _, node := range allowedNodes {
-				eft := calculateEFT(task, node, taskMap, assignments, taskStartTimes, taskEFTs, nodeAvailTime)
-				if eft < bestEFT {
-					bestEFT = eft
-					bestNode = node.Name
-				}
+			execTime := calculateComputationCost(task, node)
+			if execTime < bestExecTime {
+				bestExecTime = execTime
+				bestNode = node.Name
 			}
 		}
 
-		// Apply assignment
-		assignments[taskName] = bestNode
-		taskEFTs[taskName] = bestEFT
-		
-		// Recalculate start time for node availability update
-		// (Duplicate logic, can be refactored into helper)
+		// Calculate actual start and completion times for bookkeeping
 		dependencies, _, _ := unstructured.NestedStringSlice(task, "dependencies")
 		dataReadyTime := 0.0
 		for _, dep := range dependencies {
 			commCost := calculateCommunicationCost(taskMap[dep], assignments[dep], bestNode)
-			depFinish := taskEFTs[dep] + commCost
+			depFinish := taskECTs[dep] + commCost
 			if depFinish > dataReadyTime {
 				dataReadyTime = depFinish
 			}
 		}
-		
-		var bestNodeObj NodeInfo
-		for _, n := range allNodes {
-			if n.Name == bestNode { bestNodeObj = n; break }
-		}
-		
-		startTime := math.Max(dataReadyTime, nodeAvailTime[bestNode])
-		taskStartTimes[taskName] = startTime
-		compCost := calculateComputationCost(task, bestNodeObj)
-		nodeAvailTime[bestNode] = startTime + compCost // Update when node is free
 
-		log.Printf("[CPOP] Task %s -> %s (Priority: %.2f, CP: %v)", taskName, bestNode, priorityRanks[taskName], criticalPathTasks[taskName])
+		startTime := math.Max(dataReadyTime, nodeAvailTime[bestNode])
+		endTime := startTime + bestExecTime
+
+		assignments[taskName] = bestNode
+		taskECTs[taskName] = endTime
+		nodeAvailTime[bestNode] = endTime
+
+		log.Printf("[MET] Task %s -> %s (ExecTime: %.2f, Start: %.2f, End: %.2f)",
+			taskName, bestNode, bestExecTime, startTime, endTime)
 	}
 
-	// Store result in global schedule map
-	cpopSchedule.mu.Lock()
-	cpopSchedule.taskAssignments[dagName] = assignments
-	cpopSchedule.taskRanks[dagName] = priorityRanks
-	cpopSchedule.taskEFTs[dagName] = taskEFTs
-	cpopSchedule.mu.Unlock()
+	// Store the schedule
+	metSchedule.mu.Lock()
+	metSchedule.taskAssignments[dagName] = assignments
+	metSchedule.taskECTs[dagName] = taskECTs
+	metSchedule.mu.Unlock()
 
-	log.Printf("[CPOP] Schedule computed for DAG %s - Estimated Makespan: %.2f seconds", dagName, getMaxEFT(taskEFTs))
+	log.Printf("[MET] Schedule computed for DAG %s - Estimated Makespan: %.2f seconds", dagName, getMaxECT(taskECTs))
+}
+
+// Topological sort using Kahn's algorithm
+func topologicalSort(taskMap map[string]map[string]interface{}) []string {
+	// Calculate in-degree for each task
+	inDegree := make(map[string]int)
+	for taskName := range taskMap {
+		inDegree[taskName] = 0
+	}
+	for _, task := range taskMap {
+		deps, _, _ := unstructured.NestedStringSlice(task, "dependencies")
+		taskName, _ := task["name"].(string)
+		inDegree[taskName] = len(deps)
+	}
+
+	// Start with tasks that have no dependencies
+	queue := make([]string, 0)
+	for taskName, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, taskName)
+		}
+	}
+
+	var result []string
+	for len(queue) > 0 {
+		// Pop from front
+		current := queue[0]
+		queue = queue[1:]
+		result = append(result, current)
+
+		// Find tasks that depend on current
+		for taskName, task := range taskMap {
+			deps, _, _ := unstructured.NestedStringSlice(task, "dependencies")
+			for _, dep := range deps {
+				if dep == current {
+					inDegree[taskName]--
+					if inDegree[taskName] == 0 {
+						queue = append(queue, taskName)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return result
 }
 
 // Get allowed nodes for a task based on constraints
@@ -356,7 +291,6 @@ func getNodesForTask(taskName string, taskConstraints map[string][]string, allNo
 		return allNodes
 	}
 
-	// Filter nodes to only those in the constraint list
 	allowedSet := make(map[string]bool)
 	for _, name := range allowedNames {
 		allowedSet[name] = true
@@ -370,102 +304,6 @@ func getNodesForTask(taskName string, taskConstraints map[string][]string, allNo
 	}
 
 	return result
-}
-
-// Calculate upward rank recursively
-func calculateUpwardRank(taskMap map[string]map[string]interface{}, avgCompCosts map[string]float64, ranks map[string]float64) {
-	var calcRank func(taskName string) float64
-	calcRank = func(taskName string) float64 {
-		if rank, exists := ranks[taskName]; exists {
-			return rank
-		}
-
-		task := taskMap[taskName]
-
-		maxSuccRank := 0.0
-		for succName, succTask := range taskMap {
-			succDeps, _, _ := unstructured.NestedStringSlice(succTask, "dependencies")
-			for _, dep := range succDeps {
-				if dep == taskName {
-					commCost := getAvgCommunicationCost(task)
-					succRank := calcRank(succName)
-					if commCost+succRank > maxSuccRank {
-						maxSuccRank = commCost + succRank
-					}
-					break
-				}
-			}
-		}
-
-		rank := avgCompCosts[taskName] + maxSuccRank
-		ranks[taskName] = rank
-		return rank
-	}
-
-	for taskName := range taskMap {
-		calcRank(taskName)
-	}
-}
-
-func calculateDownwardRank(taskMap map[string]map[string]interface{}, avgCompCosts map[string]float64, ranks map[string]float64){
-	var calcRank func(taskName string)float64
-	calcRank = func(taskName string) float64 {
-		if rank, exists := ranks[taskName]; exists {
-			return rank
-		}
-
-		// Base Case
-		task := taskMap[taskName]
-		dependencies, _, _ := unstructured.NestedStringSlice(task, "dependencies")
-
-		if len(dependencies) == 0 {
-			ranks[taskName] = 0
-			return 0
-		}
-
-		maxPredRank := 0.0
-		for _, depName := range dependencies {
-			predRank := calcRank(depName)
-
-			predCompCost := avgCompCosts[depName]
-
-			depTask := taskMap[depName]
-			commCost := getAvgCommunicationCost(depTask)
-
-			currentPathCost := predRank + predCompCost + commCost
-			if currentPathCost > maxPredRank {
-				maxPredRank = currentPathCost
-			}
-		}
-		ranks[taskName] = maxPredRank
-		return maxPredRank
-	}
-
-	for taskName := range taskMap {
-		calcRank(taskName)
-	}
-}
-
-// Calculate EFT for a task on a node
-func calculateEFT(task map[string]interface{}, node NodeInfo, taskMap map[string]map[string]interface{},
-	assignments map[string]string, taskStartTimes, taskEFTs map[string]float64, nodeAvailTime map[string]float64) float64 {
-
-	dependencies, _, _ := unstructured.NestedStringSlice(task, "dependencies")
-	dataReadyTime := 0.0
-	for _, dep := range dependencies {
-		if assignedNode, exists := assignments[dep]; exists {
-			commCost := calculateCommunicationCost(taskMap[dep], assignedNode, node.Name)
-			depFinish := taskEFTs[dep] + commCost
-			if depFinish > dataReadyTime {
-				dataReadyTime = depFinish
-			}
-		}
-	}
-
-	est := math.Max(dataReadyTime, nodeAvailTime[node.Name])
-	compCost := calculateComputationCost(task, node)
-
-	return est + compCost
 }
 
 // Calculate computation cost for a task on a node
@@ -498,11 +336,6 @@ func calculateCommunicationCost(task map[string]interface{}, sourceNode, destNod
 	bandwidthBytesPerSec := LinkBandwidthGbps * 125000000
 
 	return float64(sizeInBytes) / bandwidthBytesPerSec
-}
-
-// Get average communication cost for rank calculation
-func getAvgCommunicationCost(task map[string]interface{}) float64 {
-	return calculateCommunicationCost(task, "node1", "node2") * 0.5
 }
 
 // Parse data size string (e.g., "100MB" -> bytes)
@@ -574,25 +407,14 @@ func getNodeInfo(client *kubernetes.Clientset, cfg *rest.Config) ([]NodeInfo, er
 }
 
 // Helper functions
-func average(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, v := range values {
-		sum += v
-	}
-	return sum / float64(len(values))
-}
-
-func getMaxEFT(taskEFTs map[string]float64) float64 {
-	maxEFT := 0.0
-	for _, eft := range taskEFTs {
-		if eft > maxEFT {
-			maxEFT = eft
+func getMaxECT(taskECTs map[string]float64) float64 {
+	maxECT := 0.0
+	for _, ect := range taskECTs {
+		if ect > maxECT {
+			maxECT = ect
 		}
 	}
-	return maxEFT
+	return maxECT
 }
 
 // Parse resource string
@@ -615,7 +437,6 @@ func processDAG(client *kubernetes.Clientset, dag *unstructured.Unstructured, cf
 	}
 	dagName := dag.GetName()
 
-	// Get existing pods for this DAG
 	pods, err := client.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("dag-name=%s", dagName),
 	})
@@ -624,12 +445,10 @@ func processDAG(client *kubernetes.Clientset, dag *unstructured.Unstructured, cf
 		return
 	}
 
-	// Build map of step -> node for completed steps
 	stepNodes := getStepNodeMap(pods.Items)
 
-	// Get steps from DAG spec
 	steps, _, _ := unstructured.NestedSlice(dag.Object, "spec", "steps")
-	log.Printf("[CPOP] Processing DAG %s: %d steps, %d existing pods", dagName, len(steps), len(pods.Items))
+	log.Printf("[MET] Processing DAG %s: %d steps, %d existing pods", dagName, len(steps), len(pods.Items))
 
 	for _, stepObj := range steps {
 		step := stepObj.(map[string]interface{})
@@ -637,7 +456,7 @@ func processDAG(client *kubernetes.Clientset, dag *unstructured.Unstructured, cf
 		dependencies, _, _ := unstructured.NestedStringSlice(step, "dependencies")
 
 		if isStepReady(stepName, dependencies, pods.Items) {
-			log.Printf("[CPOP] Step %s is ready, creating pod", stepName)
+			log.Printf("[MET] Step %s is ready, creating pod", stepName)
 			createStepPod(client, dag, step, namespace, stepNodes)
 		}
 	}
@@ -696,7 +515,7 @@ func isMainContainerCompleted(pod *corev1.Pod) bool {
 	return false
 }
 
-// Create a pod for a DAG step using CPOP assignment
+// Create a pod for a DAG step using MET assignment
 func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured, step map[string]interface{}, namespace string, stepNodes map[string]string) {
 	dagName := dag.GetName()
 	stepName, _ := step["name"].(string)
@@ -707,16 +526,15 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 
 	podName := fmt.Sprintf("%s-%s", dagName, stepName)
 
-	// Get scheduler name - use dag-scheduler to enforce placement
 	schedulerName, _, _ := unstructured.NestedString(dag.Object, "spec", "schedulerName")
 	if schedulerName == "" {
 		schedulerName = "dag-scheduler"
 	}
 
-	// Get CPOP-assigned node for this step
-	cpopSchedule.mu.RLock()
-	assignments := cpopSchedule.taskAssignments[dagName]
-	cpopSchedule.mu.RUnlock()
+	// Get MET-assigned node for this step
+	metSchedule.mu.RLock()
+	assignments := metSchedule.taskAssignments[dagName]
+	metSchedule.mu.RUnlock()
 
 	assignedNode := ""
 	if assignments != nil {
@@ -724,12 +542,11 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 	}
 
 	if assignedNode == "" {
-		log.Printf("[CPOP] Warning: No CPOP assignment for step %s, will use scheduler default", stepName)
+		log.Printf("[MET] Warning: No MET assignment for step %s, will use scheduler default", stepName)
 	} else {
-		log.Printf("[CPOP] Step %s assigned to node %s by CPOP", stepName, assignedNode)
+		log.Printf("[MET] Step %s assigned to node %s by MET", stepName, assignedNode)
 	}
 
-	// Determine which dependencies are on which nodes
 	depNodes := make(map[string]string)
 	for _, dep := range dependencies {
 		if node, ok := stepNodes[dep]; ok {
@@ -737,10 +554,8 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 		}
 	}
 
-	// Build the data output path for this step
 	outputPath := fmt.Sprintf("%s/%s/%s", DataOutputPath, dagName, stepName)
 
-	// Build volume mounts
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "dag-output",
@@ -748,10 +563,8 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 		},
 	}
 
-	// Build the main command
 	mainCmd := buildMainCommand(stepName, dagName, dependencies, depNodes, args, dataSize, outputPath)
 
-	// Create the pod
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -797,8 +610,6 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 		},
 	}
 
-	// Set node affinity to the CPOP-assigned node
-	// This uses Kubernetes native affinity which dag-scheduler respects
 	if assignedNode != "" {
 		pod.Spec.Affinity = &corev1.Affinity{
 			NodeAffinity: &corev1.NodeAffinity{
@@ -817,10 +628,9 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 				},
 			},
 		}
-		log.Printf("[CPOP] Set node affinity for step %s to node %s", stepName, assignedNode)
+		log.Printf("[MET] Set node affinity for step %s to node %s", stepName, assignedNode)
 	}
 
-	// Create the pod
 	_, err := client.CoreV1().Pods(namespace).Create(context.Background(), pod, metav1.CreateOptions{})
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
@@ -836,9 +646,9 @@ func createStepPod(client *kubernetes.Clientset, dag *unstructured.Unstructured,
 		for dep, node := range depNodes {
 			depNodesList = append(depNodesList, fmt.Sprintf("%s@%s", dep, node))
 		}
-		log.Printf("[CPOP] Created pod %s on %s (deps: %v)", podName, assignedNode, depNodesList)
+		log.Printf("[MET] Created pod %s on %s (deps: %v)", podName, assignedNode, depNodesList)
 	} else {
-		log.Printf("[CPOP] Created pod %s on %s (no dependencies)", podName, assignedNode)
+		log.Printf("[MET] Created pod %s on %s (no dependencies)", podName, assignedNode)
 	}
 }
 
@@ -879,10 +689,8 @@ func buildEnvVars(dependencies []string, depNodes map[string]string, dagName str
 func buildMainCommand(stepName, dagName string, dependencies []string, depNodes map[string]string, args []string, dataSize, outputPath string) string {
 	var parts []string
 
-	// Create output directory
 	parts = append(parts, fmt.Sprintf("mkdir -p %s", outputPath))
 
-	// Fetch data from dependencies - determine same-node vs cross-node at RUNTIME
 	if len(dependencies) > 0 {
 		parts = append(parts, "echo '=== Fetching input data ==='")
 		parts = append(parts, "mkdir -p /tmp/inputs")
@@ -896,7 +704,6 @@ func buildMainCommand(stepName, dagName string, dependencies []string, depNodes 
 			localInputPath := fmt.Sprintf("/tmp/inputs/%s", dep)
 			dataURL := fmt.Sprintf("http://%s:%d/%s/%s/output", depNode, DataAgentPort, dagName, dep)
 
-			// Runtime check: if on same node, use hostPath; otherwise use Data Agent
 			parts = append(parts, fmt.Sprintf(
 				"DEP_NODE='%s'; "+
 					"if [ \"$NODE_NAME\" = \"$DEP_NODE\" ]; then "+
@@ -920,12 +727,10 @@ func buildMainCommand(stepName, dagName string, dependencies []string, depNodes 
 		parts = append(parts, "echo '=== Input data ready ==='")
 	}
 
-	// Run user command
 	if len(args) > 0 {
 		parts = append(parts, args[0])
 	}
 
-	// Write output data
 	if dataSize != "" && dataSize != "0" {
 		parts = append(parts, fmt.Sprintf(
 			"echo '=== Writing output data ===' && "+

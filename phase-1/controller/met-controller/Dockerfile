@@ -5,10 +5,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
-RUN CGO_ENABLED=0 go build -o cpop-controller main.go
+RUN CGO_ENABLED=0 go build -o met-controller main.go
 
 # ---- Runtime stage ----
 FROM alpine:latest
 WORKDIR /root
-COPY --from=builder /app/cpop-controller .
-ENTRYPOINT ["./cpop-controller"]
+COPY --from=builder /app/met-controller .
+ENTRYPOINT ["./met-controller"]
