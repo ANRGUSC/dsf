@@ -105,11 +105,71 @@ func main() {
 
 	log.Println("[odag-ctrl] starting odag-controller (layer-by-layer, file transport)")
 
+	// On startup, reconcile stale ODAGs whose status.phase is still
+	// Running/Scheduling/Pending but whose task pods no longer exist
+	// (typically left over by a previous controller crash or rollout).
+	reconcileStaleODAGs(dynClient, client)
+
 	go watchBandwidthConfigMap(client)
 	go watchODAGTemplates(dynClient)
 	go watchODAGs(dynClient, client)
 	go pollRunningODAGs(dynClient, client)
 	watchPods(client, dynClient)
+}
+
+// reconcileStaleODAGs marks any ODAG stuck in Running/Scheduling/Pending with
+// no live task pods as Failed. Runs once at controller startup.
+func reconcileStaleODAGs(dynClient dynamic.Interface, client *kubernetes.Clientset) {
+	list, err := dynClient.Resource(odagGVR).Namespace("").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		log.Printf("[odag-ctrl] startup reconcile: list ODAGs failed: %v", err)
+		return
+	}
+	stale := 0
+	for i := range list.Items {
+		obj := &list.Items[i]
+		ns, name := obj.GetNamespace(), obj.GetName()
+		phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
+		if phase != "Running" && phase != "Scheduling" && phase != "Pending" {
+			continue
+		}
+		pods, err := client.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{
+			LabelSelector: labelODAGName + "=" + name,
+		})
+		if err != nil {
+			log.Printf("[odag-ctrl] startup reconcile: list pods for %s/%s failed: %v", ns, name, err)
+			continue
+		}
+		liveCount, okCount, badCount := 0, 0, 0
+		for _, p := range pods.Items {
+			switch p.Status.Phase {
+			case corev1.PodRunning, corev1.PodPending:
+				liveCount++
+			case corev1.PodSucceeded:
+				okCount++
+			case corev1.PodFailed:
+				badCount++
+			}
+		}
+		if liveCount > 0 {
+			// Legitimately in progress from a prior instance; leave alone.
+			runningODAGs.Store(ns+"/"+name, true)
+			continue
+		}
+		total := okCount + badCount
+		switch {
+		case total == 0:
+			updateODAGPhase(dynClient, ns, name, "Failed", "stale: no pods found at controller startup")
+		case badCount == 0 && total > 0:
+			updateODAGPhase(dynClient, ns, name, "Succeeded", "reconciled at controller startup: all pods succeeded")
+		default:
+			updateODAGPhase(dynClient, ns, name, "Failed", "reconciled at controller startup: one or more pods failed")
+		}
+		stale++
+	}
+	if stale > 0 {
+		log.Printf("[odag-ctrl] startup reconcile: finalized %d stale ODAG(s)", stale)
+	}
 }
 
 func buildConfig(kubeconfig string) (*rest.Config, error) {
@@ -204,6 +264,19 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 	}
 	key := namespace + "/" + odagName
 
+	// Phase gate: only fresh (unphased) ODAGs get scheduled.
+	// Prevents re-execution of already-running, completed, or failed ODAGs
+	// when the watcher re-delivers ADDED events (e.g., on controller restart).
+	if phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase"); phase != "" {
+		// Already processed by a prior controller instance — mirror to
+		// in-memory caches so poller and status updates still work.
+		if phase == "Scheduling" || phase == "Running" || phase == "Pending" {
+			runningODAGs.Store(key, true)
+		}
+		processedODAGs.Store(key, true)
+		return
+	}
+
 	if _, loaded := processedODAGs.LoadOrStore(key, true); loaded {
 		return
 	}
@@ -245,13 +318,14 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 	}
 
 	schedulerName, _, _ := unstructured.NestedString(obj.Object, "spec", "scheduler")
+	schedCfg := extractSchedulerConfig(templateObj)
 	var assignMap map[string]nodeInfo
 	var predicted []predictedTaskEntry
 	var flows []predictedFlowEntry
 	switch schedulerName {
 	case "heft":
-		log.Printf("[odag-ctrl] using HEFT scheduler for %s", key)
-		hr := heftAssignTasks(tasks, nodeMap, rtRes, dsRes, bwRes)
+		log.Printf("[odag-ctrl] using HEFT scheduler for %s (spreadEpsilon=%.2fs)", key, schedCfg.SpreadEpsilon)
+		hr := heftAssignTasks(tasks, nodeMap, rtRes, dsRes, bwRes, heftOptions{SpreadEpsilon: schedCfg.SpreadEpsilon})
 		assignMap = hr.assignMap
 		// Use HEFT's own schedule directly (avoids recomputation order mismatch).
 		for _, t := range tasks {

@@ -271,23 +271,28 @@ func (s *Server) handleGetODAGHistory(w http.ResponseWriter, r *http.Request) {
 // --------------------------------------------------------------------------
 
 type nodeInfoResp struct {
-	Name             string  `json:"name"`
-	Ready            bool    `json:"ready"`
-	Schedulable      bool    `json:"schedulable"`
-	Roles            string  `json:"roles"`
-	InternalIP       string  `json:"internalIP"`
-	KubeletVersion   string  `json:"kubeletVersion"`
-	AllocCPUMillis   int64   `json:"allocCPUMillis"`
-	AllocMemBytes    int64   `json:"allocMemBytes"`
-	UsedCPUMillis    int64   `json:"usedCPUMillis"`
-	UsedMemBytes     int64   `json:"usedMemBytes"`
-	CPUPct           float64 `json:"cpuPct"`
-	MemPct           float64 `json:"memPct"`
-	TotalPods        int     `json:"totalPods"`
-	ODAGTasks        int     `json:"odagTasks"`
-	CDAGTasks        int     `json:"cdagTasks"`
-	RunningODAGTasks int     `json:"runningOdagTasks"`
-	RunningCDAGTasks int     `json:"runningCdagTasks"`
+	Name               string  `json:"name"`
+	Ready              bool    `json:"ready"`
+	Schedulable        bool    `json:"schedulable"`
+	Roles              string  `json:"roles"`
+	InternalIP         string  `json:"internalIP"`
+	KubeletVersion     string  `json:"kubeletVersion"`
+	AllocCPUMillis     int64   `json:"allocCPUMillis"`
+	AllocMemBytes      int64   `json:"allocMemBytes"`
+	UsedCPUMillis      int64   `json:"usedCPUMillis"`
+	UsedMemBytes       int64   `json:"usedMemBytes"`
+	CPUPct             float64 `json:"cpuPct"`
+	MemPct             float64 `json:"memPct"`
+	DiskCapacityBytes  int64   `json:"diskCapacityBytes"`
+	DiskUsedBytes      int64   `json:"diskUsedBytes"`
+	DiskAvailableBytes int64   `json:"diskAvailableBytes"`
+	DiskPct            float64 `json:"diskPct"`
+	DiskPressure       bool    `json:"diskPressure"`
+	TotalPods          int     `json:"totalPods"`
+	ODAGTasks          int     `json:"odagTasks"`
+	CDAGTasks          int     `json:"cdagTasks"`
+	RunningODAGTasks   int     `json:"runningOdagTasks"`
+	RunningCDAGTasks   int     `json:"runningCdagTasks"`
 }
 
 func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +331,48 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Per-node filesystem usage via kubelet stats/summary proxy.
+	type diskStats struct {
+		capacity, used, available int64
+	}
+	type statsSummary struct {
+		Node struct {
+			Fs struct {
+				CapacityBytes  int64 `json:"capacityBytes"`
+				UsedBytes      int64 `json:"usedBytes"`
+				AvailableBytes int64 `json:"availableBytes"`
+			} `json:"fs"`
+		} `json:"node"`
+	}
+	disk := map[string]diskStats{}
+	var diskMu sync.Mutex
+	var wg sync.WaitGroup
+	for _, n := range nodes.Items {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			path := fmt.Sprintf("/api/v1/nodes/%s/proxy/stats/summary", name)
+			cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			raw, err := s.kubeClient.CoreV1().RESTClient().Get().AbsPath(path).DoRaw(cctx)
+			if err != nil {
+				return
+			}
+			var ss statsSummary
+			if json.Unmarshal(raw, &ss) != nil {
+				return
+			}
+			diskMu.Lock()
+			disk[name] = diskStats{
+				capacity:  ss.Node.Fs.CapacityBytes,
+				used:      ss.Node.Fs.UsedBytes,
+				available: ss.Node.Fs.AvailableBytes,
+			}
+			diskMu.Unlock()
+		}(n.Name)
+	}
+	wg.Wait()
 
 	// Tally pods per node.
 	type podTally struct {
@@ -396,28 +443,44 @@ func (s *Server) handleClusterNodes(w http.ResponseWriter, r *http.Request) {
 		if allocMem > 0 {
 			memPct = float64(u.mem) / float64(allocMem) * 100
 		}
+		d := disk[n.Name]
+		diskPct := 0.0
+		if d.capacity > 0 {
+			diskPct = float64(d.used) / float64(d.capacity) * 100
+		}
+		diskPressure := false
+		for _, c := range n.Status.Conditions {
+			if c.Type == corev1.NodeDiskPressure && c.Status == corev1.ConditionTrue {
+				diskPressure = true
+			}
+		}
 		t := tally[n.Name]
 		if t == nil {
 			t = &podTally{}
 		}
 		result = append(result, nodeInfoResp{
-			Name:             n.Name,
-			Ready:            ready,
-			Schedulable:      schedulable,
-			Roles:            strings.Join(roles, ","),
-			InternalIP:       internalIP,
-			KubeletVersion:   n.Status.NodeInfo.KubeletVersion,
-			AllocCPUMillis:   allocCPU,
-			AllocMemBytes:    allocMem,
-			UsedCPUMillis:    u.cpu,
-			UsedMemBytes:     u.mem,
-			CPUPct:           cpuPct,
-			MemPct:           memPct,
-			TotalPods:        t.total,
-			ODAGTasks:        t.odag,
-			CDAGTasks:        t.cdag,
-			RunningODAGTasks: t.odagRunning,
-			RunningCDAGTasks: t.cdagRunning,
+			Name:               n.Name,
+			Ready:              ready,
+			Schedulable:        schedulable,
+			Roles:              strings.Join(roles, ","),
+			InternalIP:         internalIP,
+			KubeletVersion:     n.Status.NodeInfo.KubeletVersion,
+			AllocCPUMillis:     allocCPU,
+			AllocMemBytes:      allocMem,
+			UsedCPUMillis:      u.cpu,
+			UsedMemBytes:       u.mem,
+			CPUPct:             cpuPct,
+			MemPct:             memPct,
+			DiskCapacityBytes:  d.capacity,
+			DiskUsedBytes:      d.used,
+			DiskAvailableBytes: d.available,
+			DiskPct:            diskPct,
+			DiskPressure:       diskPressure,
+			TotalPods:          t.total,
+			ODAGTasks:          t.odag,
+			CDAGTasks:          t.cdag,
+			RunningODAGTasks:   t.odagRunning,
+			RunningCDAGTasks:   t.cdagRunning,
 		})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })

@@ -223,6 +223,11 @@ export interface ClusterNode {
   usedMemBytes: number
   cpuPct: number
   memPct: number
+  diskCapacityBytes: number
+  diskUsedBytes: number
+  diskAvailableBytes: number
+  diskPct: number
+  diskPressure: boolean
   totalPods: number
   odagTasks: number
   cdagTasks: number

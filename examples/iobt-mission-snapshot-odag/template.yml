@@ -6,11 +6,17 @@ metadata:
 spec:
   description: "IoBT rapid ISR snapshot: 4 sensors → preprocess → infer → fuse → report"
   scheduler: heft
+  schedulerConfig:
+    # Candidate nodes whose predicted EFT is within 1.0s of the minimum are
+    # treated as tied; least-loaded wins. Absorbs profiler noise and avoids
+    # "all infers concentrate on one node" pathology when learned runtimes
+    # are nearly equal across compute candidates.
+    spreadEpsilon: 1.0
   profiling:
     enabled: true
     warmupRuns: 0
     minSamples: 2
-    emaAlpha: 0.3
+    emaAlpha: 0.7
     maxSamples: 50
   defaults:
     runtime: 5
@@ -86,7 +92,7 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-1"]
-      dataSize: "20MB"
+      dataSize: "100MB"
       runtime: 4
       resources:
         cpu: "300m"
@@ -98,7 +104,7 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-2"]
-      dataSize: "25MB"
+      dataSize: "120MB"
       runtime: 4
       resources:
         cpu: "300m"
@@ -110,7 +116,7 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-3"]
-      dataSize: "15MB"
+      dataSize: "80MB"
       runtime: 4
       resources:
         cpu: "300m"
@@ -122,7 +128,7 @@ spec:
       image: 192.168.1.163:5000/dsf-iobt-preprocess:latest
       command: ["python", "task.py"]
       dependencies: ["capture-4"]
-      dataSize: "30MB"
+      dataSize: "150MB"
       runtime: 4
       resources:
         cpu: "300m"
@@ -145,7 +151,7 @@ spec:
         cpu: "500m"
         memory: "512Mi"
       constraints:
-        nodeNames: [anrg-6, anrg-7, anrg-8, anrg-9]
+        nodeNames: [anrg-6, anrg-7, anrg-8]
 
     - name: infer-2
       image: 192.168.1.163:5000/dsf-iobt-infer:latest
@@ -157,7 +163,7 @@ spec:
         cpu: "500m"
         memory: "512Mi"
       constraints:
-        nodeNames: [anrg-6, anrg-7, anrg-8, anrg-9]
+        nodeNames: [anrg-6, anrg-7, anrg-8]
 
     - name: infer-3
       image: 192.168.1.163:5000/dsf-iobt-infer:latest
@@ -169,7 +175,7 @@ spec:
         cpu: "500m"
         memory: "512Mi"
       constraints:
-        nodeNames: [anrg-6, anrg-7, anrg-8, anrg-9]
+        nodeNames: [anrg-6, anrg-7, anrg-8]
 
     - name: infer-4
       image: 192.168.1.163:5000/dsf-iobt-infer:latest
@@ -181,7 +187,7 @@ spec:
         cpu: "500m"
         memory: "512Mi"
       constraints:
-        nodeNames: [anrg-6, anrg-7, anrg-8, anrg-9]
+        nodeNames: [anrg-6, anrg-7, anrg-8]
 
     # ====================================================================
     # Layer 3 — Fusion (fan-in from all 4 infer tasks)

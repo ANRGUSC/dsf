@@ -25,10 +25,12 @@ export default function Cluster() {
     acc.mem += n.allocMemBytes
     acc.used += n.usedCPUMillis
     acc.usedMem += n.usedMemBytes
+    acc.disk += n.diskCapacityBytes
+    acc.usedDisk += n.diskUsedBytes
     acc.odag += n.runningOdagTasks
     acc.cdag += n.runningCdagTasks
     return acc
-  }, { nodes: 0, usable: 0, cpu: 0, mem: 0, used: 0, usedMem: 0, odag: 0, cdag: 0 })
+  }, { nodes: 0, usable: 0, cpu: 0, mem: 0, used: 0, usedMem: 0, disk: 0, usedDisk: 0, odag: 0, cdag: 0 })
 
   return (
     <div>
@@ -40,7 +42,7 @@ export default function Cluster() {
         <Card label="Nodes" value={`${totals.usable}/${totals.nodes}`} sub="usable" />
         <Card label="Cluster CPU" value={`${(totals.cpu / 1000).toFixed(1)} cores`} sub={`${(totals.used / 1000).toFixed(2)} in use`} />
         <Card label="Cluster Memory" value={fmtBytes(totals.mem)} sub={`${fmtBytes(totals.usedMem)} in use`} />
-        <Card label="CPU load" value={`${totals.cpu === 0 ? 0 : (totals.used / totals.cpu * 100).toFixed(1)}%`} sub="cluster-wide" />
+        <Card label="Cluster Disk" value={fmtBytes(totals.disk)} sub={`${fmtBytes(totals.usedDisk)} in use`} />
         <Card label="Running ODAG tasks" value={String(totals.odag)} sub="across all nodes" />
         <Card label="Running CDAG tasks" value={String(totals.cdag)} sub="across all nodes" />
       </div>
@@ -54,6 +56,7 @@ export default function Cluster() {
             <th className="pb-2 pr-4">IP</th>
             <th className="pb-2 pr-4 w-32">CPU</th>
             <th className="pb-2 pr-4 w-32">Memory</th>
+            <th className="pb-2 pr-4 w-32">Disk</th>
             <th className="pb-2 pr-4">Pods</th>
             <th className="pb-2 pr-4">ODAG</th>
             <th className="pb-2">CDAG</th>
@@ -101,6 +104,21 @@ function NodeRow({ n }: { n: ClusterNode }) {
         <div className="text-xs text-on-faint mt-0.5 font-mono">
           {fmtBytes(n.usedMemBytes)}/{fmtBytes(n.allocMemBytes)} ({n.memPct.toFixed(0)}%)
         </div>
+      </td>
+      <td className="py-2 pr-4">
+        {n.diskCapacityBytes > 0 ? (
+          <>
+            <Bar pct={n.diskPct} />
+            <div className="text-xs text-on-faint mt-0.5 font-mono">
+              {fmtBytes(n.diskAvailableBytes)} free ({n.diskPct.toFixed(0)}%)
+              {n.diskPressure && (
+                <span className="ml-1 text-red-500 dark:text-red-400" title="Kubelet reports DiskPressure">⚠</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <span className="text-xs text-on-faint">—</span>
+        )}
       </td>
       <td className="py-2 pr-4 text-on-muted">{n.totalPods}</td>
       <td className="py-2 pr-4 text-on-muted">

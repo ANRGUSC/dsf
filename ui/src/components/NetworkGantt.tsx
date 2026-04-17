@@ -11,7 +11,6 @@ function labelFill() { return isDark() ? '#9ca3af' : '#6b7280' }
 function tickFill() { return isDark() ? '#6b7280' : '#9ca3af' }
 function barTextDark() { return isDark() ? '#0f172a' : '#ffffff' }
 function legendFill() { return isDark() ? '#6b7280' : '#9ca3af' }
-function dashStroke() { return isDark() ? '#374151' : '#d1d5db' }
 
 const TASK_COLORS = [
   '#60a5fa', '#34d399', '#f59e0b', '#f87171',
@@ -161,7 +160,7 @@ export default function NetworkGantt({ dag, align }: Props) {
               key={`sep-${node}`}
               x1={a.ML} y1={a.nodeYOffset[node]}
               x2={a.ML + a.innerW} y2={a.nodeYOffset[node]}
-              stroke={dashStroke()} strokeWidth={1} strokeDasharray="6 4"
+              stroke={isDark() ? '#f3f4f6' : '#000000'} strokeWidth={1}
             />
           )
         })}

@@ -3,8 +3,9 @@
 IoBT Mission Snapshot — preprocess task (preprocess-1 .. preprocess-4).
 
 Receives raw image bytes from capture-i, computes a sha256 digest over
-64 KB chunks (simulating feature extraction), and produces a smaller
-feature blob of DSF_DATA_SIZE bytes.
+64 KB chunks (simulating feature extraction), and produces a feature blob
+of DSF_DATA_SIZE bytes. No compression is applied — output size is driven
+entirely by the template's dataSize field.
 """
 
 import hashlib
@@ -15,7 +16,7 @@ from dsf_sdk import DSFTask
 
 task = DSFTask()
 
-DATA_SIZE = task.expected_data_size or 20_000_000  # default 20 MB
+DATA_SIZE = task.expected_data_size or 100_000_000  # default 100 MB (no compression)
 RUNTIME = task.expected_runtime or 5.0
 
 print(f"[{task.name}] node={task.node}  data_size={DATA_SIZE}  runtime={RUNTIME}s", flush=True)
@@ -45,12 +46,20 @@ if remaining > 0:
     time.sleep(remaining)
 
 # --- produce feature blob ---
-# Header: digest bytes, then pad with repeating digest to reach DATA_SIZE
+# No compression: output matches DATA_SIZE. Build from digest bytes repeated
+# to fill DATA_SIZE (or append raw bytes if digest alone is smaller than DATA_SIZE).
 if len(digest_blob) >= DATA_SIZE:
     features = digest_blob[:DATA_SIZE]
 else:
-    reps = DATA_SIZE // len(digest_blob) + 1
-    features = (digest_blob * reps)[:DATA_SIZE]
+    # Prefix with the digest, then fill the rest by reusing the raw bytes we
+    # received — this avoids synthesising entirely new data and keeps the
+    # output size faithful to the "no compression" assumption.
+    remaining = DATA_SIZE - len(digest_blob)
+    if len(raw) >= remaining:
+        features = digest_blob + raw[:remaining]
+    else:
+        reps = remaining // len(raw) + 1
+        features = digest_blob + (raw * reps)[:remaining]
 
 elapsed_proc = time.perf_counter() - t1
 print(f"[{task.name}] feature extraction done in {elapsed_proc:.3f}s  output={len(features)} bytes", flush=True)

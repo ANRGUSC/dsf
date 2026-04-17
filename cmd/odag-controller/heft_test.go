@@ -196,21 +196,22 @@ func TestHeft_FanOut_Contention(t *testing.T) {
 	// DAG: A -> B, A -> C (fan-out from A).
 	// Each on a dedicated node. A produces 100 MB. BW = 100 MB/s.
 	//
-	// HEFT rank order: A first, then B and C (equal rank).
-	// First child scheduled gets full BW (1.0 s transfer).
-	// Second child's transfer contends at A's egress:
-	//   [1,2) shared at 50 MB/s -> 50 MB. [2,2.5) alone -> 50 MB at 100 MB/s.
-	// Without contention: makespan = 3.0. With contention: 3.5.
+	// The data-agent pushes A's output to successors serially (one blocking
+	// HTTP POST at a time), so A's two outgoing transfers queue up:
+	//   A finishes at 1.0.
+	//   first xfer (to B in spec order): [1, 2).
+	//   second xfer (to C):              [2, 3).
+	//   B runs [2,3]; C runs [3,4]. Makespan = 4.0.
 	tasks := []taskSpec{
 		{Name: "A", Runtime: 1.0, DataSize: "100MB", Constraints: []string{"n1"}},
 		{Name: "B", Runtime: 1.0, Dependencies: []string{"A"}, Constraints: []string{"n2"}},
 		{Name: "C", Runtime: 1.0, Dependencies: []string{"A"}, Constraints: []string{"n3"}},
 	}
-	result := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), nil, nil, constBW(100e6))
+	result := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), nil, nil, constBW(100e6), heftOptions{})
 	ms := heftMakespan(result)
 
-	if !approxEqual(ms, 3.5, testEps) {
-		t.Errorf("fan-out makespan=%.3f, want 3.500", ms)
+	if !approxEqual(ms, 4.0, testEps) {
+		t.Errorf("fan-out makespan=%.3f, want 4.000", ms)
 	}
 }
 
@@ -227,7 +228,7 @@ func TestHeft_FanIn_Contention(t *testing.T) {
 		{Name: "C", Runtime: 1.0, DataSize: "100MB", Constraints: []string{"n3"}},
 		{Name: "D", Runtime: 1.0, Dependencies: []string{"B", "C"}, Constraints: []string{"n4"}},
 	}
-	result := heftAssignTasks(tasks, makeNodes("n2", "n3", "n4"), nil, nil, constBW(100e6))
+	result := heftAssignTasks(tasks, makeNodes("n2", "n3", "n4"), nil, nil, constBW(100e6), heftOptions{})
 	ms := heftMakespan(result)
 
 	if !approxEqual(ms, 4.0, testEps) {
@@ -244,12 +245,68 @@ func TestHeft_NoContention_Linear(t *testing.T) {
 		{Name: "B", Runtime: 1.0, DataSize: "100MB", Dependencies: []string{"A"}, Constraints: []string{"n2"}},
 		{Name: "C", Runtime: 1.0, Dependencies: []string{"B"}, Constraints: []string{"n3"}},
 	}
-	result := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), nil, nil, constBW(100e6))
+	result := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), nil, nil, constBW(100e6), heftOptions{})
 	ms := heftMakespan(result)
 
 	// Linear chain: no contention possible. makespan = 5.0.
 	if !approxEqual(ms, 5.0, testEps) {
 		t.Errorf("linear makespan=%.3f, want 5.000", ms)
+	}
+}
+
+func TestHeft_SpreadEpsilon_TieBreaksByLoad(t *testing.T) {
+	// Three independent tasks, three identical candidate nodes.
+	// Pure HEFT (ε=0) would still break exact ties by least-loaded, so all
+	// three tasks spread across the three nodes. Exercise ε=0 first.
+	tasks := []taskSpec{
+		{Name: "A", Runtime: 1.0, Constraints: []string{"n1", "n2", "n3"}},
+		{Name: "B", Runtime: 1.0, Constraints: []string{"n1", "n2", "n3"}},
+		{Name: "C", Runtime: 1.0, Constraints: []string{"n1", "n2", "n3"}},
+	}
+	result := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), nil, nil, constBW(100e6), heftOptions{})
+
+	used := map[string]bool{}
+	for _, ni := range result.assignMap {
+		used[ni.name] = true
+	}
+	if len(used) != 3 {
+		t.Errorf("ε=0 exact-tie spread: expected 3 distinct nodes, got %d (%v)", len(used), used)
+	}
+
+	// Now make runtimes *slightly* different so strict < would concentrate on
+	// the fastest node. With SpreadEpsilon=0.5 (> jitter), we still spread.
+	rt := func(taskName, nodeName string) float64 {
+		switch nodeName {
+		case "n1":
+			return 1.00
+		case "n2":
+			return 1.05
+		case "n3":
+			return 1.10
+		}
+		return 1.0
+	}
+
+	// Pure HEFT (ε=0) concentrates on n1.
+	r0 := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), rt, nil, constBW(100e6), heftOptions{})
+	concentrated := 0
+	for _, ni := range r0.assignMap {
+		if ni.name == "n1" {
+			concentrated++
+		}
+	}
+	if concentrated != len(tasks) {
+		t.Errorf("ε=0 with runtime spread: expected all %d on n1, got %d", len(tasks), concentrated)
+	}
+
+	// ε=0.5 absorbs the 0.10s spread: all three nodes should be used.
+	r1 := heftAssignTasks(tasks, makeNodes("n1", "n2", "n3"), rt, nil, constBW(100e6), heftOptions{SpreadEpsilon: 0.5})
+	usedSpread := map[string]bool{}
+	for _, ni := range r1.assignMap {
+		usedSpread[ni.name] = true
+	}
+	if len(usedSpread) != 3 {
+		t.Errorf("ε=0.5: expected spread across 3 nodes, got %d (%v)", len(usedSpread), usedSpread)
 	}
 }
 
@@ -261,7 +318,7 @@ func TestHeft_SameNode_NoTransfer(t *testing.T) {
 		{Name: "B", Runtime: 1.0, Dependencies: []string{"A"}, Constraints: []string{"n1"}},
 		{Name: "C", Runtime: 1.0, Dependencies: []string{"B"}, Constraints: []string{"n1"}},
 	}
-	result := heftAssignTasks(tasks, makeNodes("n1"), nil, nil, constBW(100e6))
+	result := heftAssignTasks(tasks, makeNodes("n1"), nil, nil, constBW(100e6), heftOptions{})
 	ms := heftMakespan(result)
 
 	if !approxEqual(ms, 3.0, testEps) {

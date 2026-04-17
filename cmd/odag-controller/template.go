@@ -35,14 +35,43 @@ var templateCache sync.Map
 // --------------------------------------------------------------------------
 
 // watchODAGTemplates watches ODAGTemplate CRs and caches them in memory.
+// Each iteration first does a List to prime/refresh the cache (so profiling
+// keeps working even if the Watch stream returns an "unknown" error, which
+// we've seen happen after CRD schema changes), then opens a Watch.
 func watchODAGTemplates(dynClient dynamic.Interface) {
+	listAndCache := func() {
+		list, err := dynClient.Resource(odagTemplateGVR).Namespace("").List(
+			context.Background(), metav1.ListOptions{},
+		)
+		if err != nil {
+			log.Printf("[template] list failed: %v", err)
+			return
+		}
+		seen := make(map[string]bool, len(list.Items))
+		for i := range list.Items {
+			obj := &list.Items[i]
+			key := obj.GetNamespace() + "/" + obj.GetName()
+			seen[key] = true
+			templateCache.Store(key, obj.DeepCopy())
+		}
+		// Evict templates that no longer exist.
+		templateCache.Range(func(k, _ any) bool {
+			if ks, ok := k.(string); ok && !seen[ks] {
+				templateCache.Delete(ks)
+			}
+			return true
+		})
+		log.Printf("[template] primed cache with %d templates", len(list.Items))
+	}
+
 	for {
+		listAndCache()
 		watcher, err := dynClient.Resource(odagTemplateGVR).Namespace("").Watch(
 			context.Background(), metav1.ListOptions{},
 		)
 		if err != nil {
-			log.Printf("[template] error watching ODAGTemplates: %v; retrying in 5s", err)
-			time.Sleep(5 * time.Second)
+			log.Printf("[template] error watching ODAGTemplates: %v; re-listing in 30s", err)
+			time.Sleep(30 * time.Second)
 			continue
 		}
 		log.Println("[template] watching ODAGTemplate resources")
@@ -187,6 +216,37 @@ func extractProfilingConfig(templateObj *unstructured.Unstructured) profilingCon
 		cfg.BandwidthSource = v
 	}
 
+	return cfg
+}
+
+// --------------------------------------------------------------------------
+// Scheduler config extraction (spec.schedulerConfig.*)
+// --------------------------------------------------------------------------
+
+// schedulerConfig holds tunable knobs for the scheduler (HEFT-specific today).
+type schedulerConfig struct {
+	// SpreadEpsilon (seconds): when > 0, candidate nodes within ε of the
+	// minimum EFT are treated as tied and the least-loaded is chosen.
+	// 0 preserves strict EFT selection (with least-loaded exact-tie break).
+	SpreadEpsilon float64
+}
+
+// extractSchedulerConfig reads spec.schedulerConfig.* from an ODAGTemplate.
+// Returns zero-valued config (no spread, strict HEFT) when unset.
+func extractSchedulerConfig(templateObj *unstructured.Unstructured) schedulerConfig {
+	var cfg schedulerConfig
+	if templateObj == nil {
+		return cfg
+	}
+	sc, ok, _ := unstructured.NestedMap(templateObj.Object, "spec", "schedulerConfig")
+	if !ok {
+		return cfg
+	}
+	if v, ok := sc["spreadEpsilon"].(float64); ok {
+		cfg.SpreadEpsilon = v
+	} else if v, ok, _ := unstructured.NestedInt64(sc, "spreadEpsilon"); ok {
+		cfg.SpreadEpsilon = float64(v)
+	}
 	return cfg
 }
 

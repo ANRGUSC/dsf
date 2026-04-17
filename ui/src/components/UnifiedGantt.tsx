@@ -9,7 +9,6 @@ function labelFill() { return isDark() ? '#9ca3af' : '#6b7280' }
 function tickFill() { return isDark() ? '#6b7280' : '#9ca3af' }
 function barTextDark() { return isDark() ? '#0f172a' : '#ffffff' }
 function legendFill() { return isDark() ? '#6b7280' : '#9ca3af' }
-function dashStroke() { return isDark() ? '#374151' : '#d1d5db' }
 function bandSep() { return isDark() ? '#1f2937' : '#e5e7eb' }
 
 // Red dashed line dividing execution and network bands within each node row.
@@ -228,7 +227,7 @@ export default function UnifiedGantt({ dag }: Props) {
               key={`sep-${node}`}
               x1={ML} y1={nodeYOffset[node]}
               x2={ML + innerW} y2={nodeYOffset[node]}
-              stroke={dashStroke()} strokeWidth={1} strokeDasharray="6 4"
+              stroke={isDark() ? '#f3f4f6' : '#000000'} strokeWidth={1}
             />
           )
         })}

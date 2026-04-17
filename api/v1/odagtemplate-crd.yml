@@ -24,6 +24,20 @@ spec:
                   default: random
                   description: >
                     Scheduler to use: "heft" or "random".
+                schedulerConfig:
+                  type: object
+                  description: Tunable knobs for the scheduler.
+                  properties:
+                    spreadEpsilon:
+                      type: number
+                      default: 0
+                      minimum: 0
+                      description: >
+                        HEFT tie-breaking tolerance in seconds. Candidate nodes whose EFT is within
+                        spreadEpsilon of the minimum EFT are treated as tied, and the least-loaded
+                        node wins. 0 preserves strict HEFT (with least-loaded exact-tie break).
+                        Larger values trade a small predicted-makespan penalty for better spread
+                        and improved resilience to runtime noise / stragglers.
                 profiling:
                   type: object
                   description: Controls runtime/data profiling across runs.

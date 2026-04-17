@@ -12,7 +12,6 @@ import {
   Edge,
   Background,
   Controls,
-  MiniMap,
   Position,
   NodeProps,
   Handle,
@@ -64,8 +63,6 @@ function chipText(): string { return isDark() ? '#9ca3af' : '#6b7280' }
 function gridColor(): string { return isDark() ? '#1f2937' : '#e5e7eb' }
 function controlsBg(): string { return isDark() ? '#111827' : '#ffffff' }
 function controlsBorder(): string { return isDark() ? '#374151' : '#d1d5db' }
-function minimapBg(): string { return isDark() ? '#111827' : '#f9fafb' }
-function minimapMask(): string { return isDark() ? 'rgba(0,0,0,0.5)' : 'rgba(200,200,200,0.5)' }
 function labelBgFill(): string { return isDark() ? '#111827' : '#ffffff' }
 function constraintColor(): string { return isDark() ? '#4b5563' : '#9ca3af' }
 function edgeDefaultColor(): string { return isDark() ? '#4b5563' : '#d1d5db' }
@@ -466,12 +463,8 @@ function DAGGraphInner({ dag }: Props) {
       >
         <Background color={gridColor()} gap={20} size={1} />
         <Controls
+          showInteractive={false}
           style={{ background: controlsBg(), border: `1px solid ${controlsBorder()}` }}
-        />
-        <MiniMap
-          nodeColor={n => bg((n.data as TaskNodeData).phase)}
-          style={{ background: minimapBg(), border: `1px solid ${controlsBorder()}` }}
-          maskColor={minimapMask()}
         />
       </ReactFlow>
     </div>

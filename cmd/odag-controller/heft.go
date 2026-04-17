@@ -402,7 +402,23 @@ type heftResult struct {
 	flows     []heftFlowEntry
 }
 
-func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver) heftResult {
+// heftOptions holds tunable knobs for the HEFT scheduler.
+//
+// SpreadEpsilon controls tie-breaking when multiple candidate nodes yield
+// near-identical EFTs. When > 0, any candidate whose EFT is within
+// SpreadEpsilon seconds of the minimum EFT is considered tied, and the
+// least-loaded node (fewest committed tasks) wins. SpreadEpsilon=0 still
+// breaks exact-EFT ties toward the least-loaded node (a strict improvement
+// over iteration-order tie-breaking).
+//
+// Motivation: when profiler-learned runtimes are nearly equal across
+// candidates, classical HEFT's strict EFT comparison concentrates all load
+// on one node, hurting resilience to stragglers and network contention.
+type heftOptions struct {
+	SpreadEpsilon float64
+}
+
+func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver runtimeResolver, dsResolver dataSizeResolver, bwResolver bandwidthResolver, opts heftOptions) heftResult {
 	if len(tasks) == 0 {
 		return heftResult{assignMap: map[string]nodeInfo{}, schedule: map[string]heftScheduleEntry{}, flows: []heftFlowEntry{}}
 	}
@@ -513,7 +529,9 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 	for _, t := range tasks {
 		sorted = append(sorted, t.Name)
 	}
-	sort.Slice(sorted, func(i, j int) bool {
+	// Stable sort: rank-tied tasks stay in spec order, which matches the
+	// data-agent's DSF_SUCCESSORS iteration order (see main.go:buildEnvVars).
+	sort.SliceStable(sorted, func(i, j int) bool {
 		return rank[sorted[i]] > rank[sorted[j]]
 	})
 
@@ -534,6 +552,12 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 	result := make(map[string]nodeInfo, len(tasks))
 	schedule := make(map[string]heftScheduleEntry, len(tasks))
 	flows := make([]heftFlowEntry, 0)
+
+	// sourceQueueEnd[dep] is the end time of dep's last outgoing cross-node
+	// transfer. The data-agent pushes to successors serially (one blocking
+	// HTTP POST at a time), so a new transfer from dep can't start before
+	// both dep has finished AND dep's prior outgoing transfer has completed.
+	sourceQueueEnd := make(map[string]float64, len(tasks))
 
 	for _, name := range sorted {
 		t := taskByName[name]
@@ -562,9 +586,19 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 		taskCPU := parseTaskCPUMillis(t.CPU)
 		taskMem := parseTaskMemBytes(t.Memory)
 
-		bestNode := ""
-		bestEFT := -1.0
-		var bestTransfers []transferResult
+		// Evaluate every candidate first; then select with ε-tie-breaking.
+		// Pure HEFT picks strictly-minimum-EFT; with SpreadEpsilon > 0, any
+		// candidate within ε of the minimum is tied, and we prefer the
+		// least-loaded node to avoid concentration.
+		type candEval struct {
+			nodeName  string
+			eft       float64
+			est       float64
+			load      int
+			transfers []transferResult
+		}
+		cands := make([]candEval, 0, len(candidates))
+		minEFT := math.MaxFloat64
 
 		for _, nodeName := range candidates {
 			tl := timelines[nodeName]
@@ -584,10 +618,13 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 				} else {
 					bytes := resolveDataSizeBytes(dep, depNode)
 					if bytes > 0 {
+						// Data-agent serializes pushes out of dep: this transfer
+						// can only start after dep's previous outgoing push finishes.
+						start := max(depFinish, sourceQueueEnd[dep])
 						pending = append(pending, pendingTransfer{
 							srcNode:  depNode,
 							dstNode:  nodeName,
-							start:    depFinish,
+							start:    start,
 							dataSize: bytes,
 							taskName: dep,
 						})
@@ -615,17 +652,42 @@ func heftAssignTasks(tasks []taskSpec, nodeMap map[string]nodeInfo, rtResolver r
 			est := tl.earliestStart(taskCPU, taskMem, runtime, depsReady)
 			eft := est + runtime
 
-			if bestNode == "" || eft < bestEFT {
-				bestNode = nodeName
-				bestEFT = eft
-				bestTransfers = transfers
+			cands = append(cands, candEval{
+				nodeName:  nodeName,
+				eft:       eft,
+				est:       est,
+				load:      len(tl.slots),
+				transfers: transfers,
+			})
+			if eft < minEFT {
+				minEFT = eft
 			}
 		}
+
+		// Select least-loaded candidate whose EFT is within ε of the minimum.
+		// Iteration order is the constraint-list order; stable within-tie pick.
+		bestIdx := -1
+		for i, c := range cands {
+			if c.eft > minEFT+opts.SpreadEpsilon {
+				continue
+			}
+			if bestIdx == -1 || c.load < cands[bestIdx].load {
+				bestIdx = i
+			}
+		}
+		bestNode := cands[bestIdx].nodeName
+		bestEFT := cands[bestIdx].eft
+		bestTransfers := cands[bestIdx].transfers
 
 		// Commit network transfers for the chosen node.
 		for _, tr := range bestTransfers {
 			if tr.end > tr.start {
 				netTimeline.commitFlow(tr.srcNode, tr.dstNode, tr.taskName, tr.start, tr.end)
+			}
+			// Extend the source task's outgoing queue so the next sibling's
+			// transfer waits for this one to finish.
+			if tr.end > sourceQueueEnd[tr.taskName] {
+				sourceQueueEnd[tr.taskName] = tr.end
 			}
 			flows = append(flows, heftFlowEntry{
 				FromTask: tr.taskName,

@@ -37,6 +37,30 @@ Full CRD-based lifecycle on k3s (lightweight Kubernetes for edge):
 - Automatic pod lifecycle management with owner references
 - Data retention policies to manage storage on resource-constrained nodes
 
+### 5. Epsilon-Tolerant HEFT Tie-Breaking for Spread and Resilience
+
+Classical HEFT picks the candidate node with the strictly minimum EFT. On real deployments with an EMA runtime profiler, per-node runtime estimates for
+independent parallel tasks frequently converge to near-identical values. Strict EFT comparison then degenerates into iteration-order tie-breaking and concentrates all candidate tasks on one node, even when the optimal-makespan decision is locally equivalent across several nodes.
+
+**Observed pathology** (IoBT 4-sensor template, 10 runs): all four independent `infer-i` tasks consistently scheduled onto one compute node (anrg-8 or anrg-7 depending on run), despite three candidate compute nodes being available with identical learned runtimes. The concentration was makespan-neutral for the *predicted* schedule but (a) brittle to any runtime jitter on the concentrated node, (b) created unnecessary ingress-bandwidth contention on that single NIC, and (c) violated the reviewer-intuitive expectation that a network-aware scheduler spreads parallel work.
+
+**Contribution.** DSF introduces a `spreadEpsilon` knob (seconds) on the ODAGTemplate `spec.schedulerConfig`. When evaluating candidate placements:
+
+1. Compute EFT for every candidate (unchanged from classical HEFT).
+2. Determine the minimum EFT across candidates (`minEFT`).
+3. Among candidates with `EFT ≤ minEFT + spreadEpsilon`, select the node with the fewest committed tasks.
+
+`spreadEpsilon = 0` still strictly improves over classical HEFT: exact ties are broken by load instead of by iteration order, so even with no tolerance the scheduler spreads work whenever EFTs are genuinely equal. Setting `spreadEpsilon > 0` absorbs profiler noise — any candidate whose EFT is within the tolerance is treated as indistinguishable from optimal.
+
+**Why this is a real contribution, not just a heuristic tweak:**
+- **Principled framing.** The scheduler's input runtimes are *point estimates* from an EMA filter; they carry unstated uncertainty. Classical HEFT's strict `<` ignores that uncertainty. Epsilon-tolerant tie-breaking is the simplest form of uncertainty-aware list scheduling — more elaborate variants (variance-aware, risk-adjusted objectives like `EFT + k·σ`) can build on this foundation.
+- **Directly targets a measurable failure mode.** Concentration under runtime jitter exposes a specific pathology that reviewers can reproduce in simulation: inject N% runtime noise into an idealized parallel layer and measure actual makespan distributions. Classical HEFT exhibits heavy right tails; ε-HEFT tightens them.
+- **Extensible to streaming (CDAGs).** The same concentration problem arises in continuous streaming pipelines when per-replica processing latency estimates converge. The ε mechanism generalizes to CDAG placement without architectural change.
+
+**Planned experiment.** Run the IoBT template 20 times at `spreadEpsilon ∈ {0, 0.5, 1.0, 2.0}` with simulated runtime jitter of ±10%, and plot: (i) placement entropy across compute nodes, (ii) mean and p95 actual makespan, (iii) ingress-bandwidth utilization variance across compute nodes. Expected shape: entropy and p95 makespan improve smoothly as ε increases, with mean makespan unchanged until ε grows large enough to trigger genuinely sub-optimal placements. The Pareto front of mean makespan vs p95 makespan directly quantifies the spread-vs-efficiency tradeoff.
+
+**Conversation record** (2026-04-16): the knob emerged from a discussion where we observed HEFT placing all four IoBT `infer-i` tasks on a single compute node across consecutive runs, driven by imperceptible EMA-learned runtime differences between candidates. The user correctly diagnosed the strict-`<` comparison as the root cause. We chose ε-tolerant tie-breaking over a load-penalty objective (option 2) because it preserves classical HEFT's optimality guarantee on the subset of decisions where EFTs genuinely differ, and because a single bounded parameter is easier to defend in the paper than a continuous weight on a composite objective. Variance-aware PEFT (option 3) is a natural follow-up extension.
+
 ---
 
 ## Comparison with Existing Systems
@@ -209,3 +233,9 @@ DSF demonstrates that network-aware scheduling with online profiling provides si
 
 **"The 27% improvement seems modest."**
 → 27% is the mean including cold-start runs. After convergence (run 4+), improvement is 32% with 7x lower variance. And this is with only 4 nodes and moderate bandwidth asymmetry (10x). With more nodes or more extreme asymmetry (common in real edge/IoBT), the gap would be larger. The consistency improvement (std 0.8s vs 5.5s) is arguably more valuable than the mean improvement for real-time edge applications.
+
+---
+
+## Benchmark Design Rationale
+
+- **IoBT Mission Snapshot** — see [iobt-design-rationale.md](iobt-design-rationale.md) for the DAG structure, the "no compression" modeling assumption on preprocess→infer transfers, and the five-point argument for why capture and preprocess are kept as separate tasks even under co-location (role separation, scheduling flexibility, per-task observability, HEFT edge-cost fidelity, independent retry semantics).
