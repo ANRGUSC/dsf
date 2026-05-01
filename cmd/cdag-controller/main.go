@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -157,9 +156,12 @@ func deployCDAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 	case "locality":
 		log.Printf("[cdag-ctrl] using locality scheduler for %s", key)
 		assignMap = localityAssignTasks(tasks, nodes)
+	case "throughput":
+		log.Printf("[cdag-ctrl] using throughput scheduler for %s", key)
+		assignMap = throughputAssignTasks(tasks, nodes)
 	default:
 		log.Printf("[cdag-ctrl] using random scheduler for %s", key)
-		assignMap = assignTasks(tasks, nodes)
+		assignMap = randomAssignTasks(tasks, nodes)
 	}
 	log.Printf("[cdag-ctrl] task placement for %s:", key)
 	for task, node := range assignMap {
@@ -430,47 +432,6 @@ func extractTasks(obj *unstructured.Unstructured) []cdagTaskSpec {
 		})
 	}
 	return tasks
-}
-
-// assignTasks assigns each CDAG task to a node using constraint-aware random placement.
-// This is the CDAG-specific placement logic: tasks run continuously, so placement
-// focuses on where the task is allowed to run rather than makespan optimisation.
-func assignTasks(tasks []cdagTaskSpec, clusterNodes []string) map[string]string {
-	nodeSet := make(map[string]bool, len(clusterNodes))
-	for _, n := range clusterNodes {
-		nodeSet[n] = true
-	}
-	result := make(map[string]string, len(tasks))
-	for _, t := range tasks {
-		result[t.Name] = pickNode(t.Constraints, clusterNodes)
-		_ = nodeSet // used by pickNode indirectly via clusterNodes
-	}
-	return result
-}
-
-// pickNode selects a random node from the constraint list intersected with clusterNodes.
-// Falls back to any cluster node if no constraint nodes are available.
-func pickNode(constraints []string, clusterNodes []string) string {
-	if len(clusterNodes) == 0 {
-		return ""
-	}
-	if len(constraints) > 0 {
-		nodeSet := make(map[string]bool, len(clusterNodes))
-		for _, n := range clusterNodes {
-			nodeSet[n] = true
-		}
-		var allowed []string
-		for _, c := range constraints {
-			if nodeSet[c] {
-				allowed = append(allowed, c)
-			}
-		}
-		if len(allowed) > 0 {
-			return allowed[rand.Intn(len(allowed))]
-		}
-		log.Printf("[cdag-ctrl] no constraint nodes available in cluster; using any node")
-	}
-	return clusterNodes[rand.Intn(len(clusterNodes))]
 }
 
 func getNodes(client *kubernetes.Clientset) ([]string, error) {
