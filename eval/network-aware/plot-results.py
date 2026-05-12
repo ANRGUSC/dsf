@@ -87,8 +87,11 @@ def plot_makespan_distribution(all_data):
         axes = [axes]
     for ax, odag in zip(axes, ODAG_ORDER):
         data = all_data.get(odag, {})
+        distribution_skip = {"heft-eps05", "heft-eps20"}
         labels, values, colors = [], [], []
         for cfg, runs in sorted(data.items()):
+            if cfg in distribution_skip:
+                continue
             vals = [r["makespan"] for r in runs if r["makespan"] is not None and r["iter"] > 4]
             if not vals:
                 continue
@@ -117,9 +120,12 @@ def plot_convergence(all_data):
     fig, axes = plt.subplots(1, len(ODAG_ORDER), figsize=(14, 4.5))
     if len(ODAG_ORDER) == 1:
         axes = [axes]
+    convergence_skip = {"heft-eps05", "heft-eps20"}
     for ax, odag in zip(axes, ODAG_ORDER):
         data = all_data.get(odag, {})
         for cfg, runs in sorted(data.items()):
+            if cfg in convergence_skip:
+                continue
             xs = [r["iter"] for r in runs if r["makespan"] is not None]
             ys = [r["makespan"] for r in runs if r["makespan"] is not None]
             if not xs:
@@ -129,9 +135,10 @@ def plot_convergence(all_data):
         ax.set_title(odag)
         ax.set_xlabel("run #")
         ax.set_ylabel("makespan (s)")
+        ymax = 75 if "archive-matrix-v2" in str(FIGS) else 56
+        ax.set_ylim(34, ymax)
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
-    fig.suptitle("Makespan convergence over runs")
     fig.tight_layout()
     fig.savefig(FIGS / "makespan-convergence.png", dpi=140)
     plt.close(fig)

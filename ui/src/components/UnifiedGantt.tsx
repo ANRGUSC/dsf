@@ -23,12 +23,14 @@ function taskColor(name: string, names: string[]): string {
   return TASK_COLORS[names.indexOf(name) % TASK_COLORS.length]
 }
 
+// TEMP: keep this around — used by the commented-out network rendering blocks.
 function fmtBytes(bytes: number): string {
   if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`
   if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(0)} KB`
   return `${bytes} B`
 }
+void fmtBytes
 
 function maxOverlap(rows: Array<{ s: number; e: number }>): number {
   if (rows.length <= 1) return rows.length
@@ -78,8 +80,14 @@ export default function UnifiedGantt({ dag }: Props) {
       : (Date.now() - refMs!) / 1000,
   }))
 
-  const predictedFlows: PredictedNetworkFlow[] = dag.predictedNetworkFlows ?? []
-  const actualFlows: ActualNetworkFlow[] = dag.actualNetworkFlows ?? []
+  // TEMP: networking bars disabled — restore by reverting this block + the
+  // two commented JSX rendering blocks below + the two commented legend
+  // entries + LEGEND_ITEMS = 4.
+  const _predictedFlows: PredictedNetworkFlow[] = dag.predictedNetworkFlows ?? []
+  const _actualFlows: ActualNetworkFlow[] = dag.actualNetworkFlows ?? []
+  void _predictedFlows; void _actualFlows
+  const predictedFlows: PredictedNetworkFlow[] = []
+  const actualFlows: ActualNetworkFlow[] = []
 
   // Union of nodes.
   const nodeSet = new Set<string>()
@@ -157,7 +165,7 @@ export default function UnifiedGantt({ dag }: Props) {
 
   // Legend: vertically stacked swatches below the axis.
   const LEGEND_ROW_H = 16
-  const LEGEND_ITEMS = 4
+  const LEGEND_ITEMS = 2 // TEMP: was 4 — networking legend entries commented out below.
   const AXIS_LABEL_H = 22
   const MB = AXIS_LABEL_H + 12 + LEGEND_ITEMS * LEGEND_ROW_H + 10
 
@@ -322,7 +330,8 @@ export default function UnifiedGantt({ dag }: Props) {
           )
         })}
 
-        {/* Net predicted — two bars per flow */}
+        {/* TEMP: networking bars disabled. Restore the two blocks below to bring them back. */}
+        {/*
         {predictedFlows.flatMap((f, i) => {
           const color = taskColor(f.fromTask, taskNames)
           const x = xs(f.start)
@@ -345,7 +354,6 @@ export default function UnifiedGantt({ dag }: Props) {
           return [render('src', f.srcNode), render('dst', f.dstNode)].filter(Boolean) as JSX.Element[]
         })}
 
-        {/* Net actual — two bars per flow */}
         {actualFlows.flatMap((f, i) => {
           const color = f.ok ? taskColor(f.fromTask, taskNames) : '#ef4444'
           const x = xs(f.start)
@@ -377,6 +385,7 @@ export default function UnifiedGantt({ dag }: Props) {
           }
           return [render('src', f.srcNode), render('dst', f.dstNode)].filter(Boolean) as JSX.Element[]
         })}
+        */}
 
         {/* X axis */}
         <line x1={ML} y1={MT + totalInnerH} x2={ML + innerW} y2={MT + totalInnerH} stroke={axisStroke()} strokeWidth={1} />
@@ -397,6 +406,8 @@ export default function UnifiedGantt({ dag }: Props) {
             <rect x={0} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.9} rx={1} />
             <text x={20} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Exec actual (solid fill)</text>
           </g>
+          {/* TEMP: networking legend entries disabled. Restore below to bring them back. */}
+          {/*
           <g transform={`translate(0, ${LEGEND_ROW_H * 2})`}>
             <rect x={0} y={0} width={14} height={10} fill="transparent" stroke="#9ca3af" strokeWidth={1.2} strokeDasharray="5 3" rx={1} />
             <text x={20} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Net predicted (dashed outline — src light fill, dst hollow)</text>
@@ -406,6 +417,7 @@ export default function UnifiedGantt({ dag }: Props) {
             <rect x={18} y={0} width={14} height={10} fill="#9ca3af" fillOpacity={0.35} stroke="#9ca3af" strokeWidth={1} rx={1} />
             <text x={38} y={5} dominantBaseline="middle" fill={legendFill()} fontSize={11}>Net actual (src solid / dst faded+outlined)</text>
           </g>
+          */}
         </g>
       </svg>
     </div>
