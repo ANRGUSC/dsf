@@ -59,8 +59,9 @@ def harvest_one(path: pathlib.Path, system: str, colocation: str,
 
     t0 = p.get("t0_wall")
     t1 = p.get("t1_wall")
-    t1p = p.get("t1p_wall")          # MinIO only
+    t1p = p.get("t1p_wall")             # MinIO only
     t3 = c.get("t3_wall")
+    t_found = c.get("t_found_wall")     # MinIO only — when HEAD first succeeded
     t4 = c.get("t4_wall")
 
     # Pod-API timestamps (RFC3339, second-resolution). t2 is the
@@ -82,8 +83,18 @@ def harvest_one(path: pathlib.Path, system: str, colocation: str,
     e2e               = delta(t0, t4)
     compute           = delta(t0, t1)
     send_or_upload    = delta(t1, t1p) if t1p is not None else None
-    producer_hold     = delta(t1, t2)
+    # producer_hold has a 1-second floor from K8s API second-resolution;
+    # clamp small negatives to 0 so the decomposition doesn't show
+    # impossible negative bars.
+    ph = delta(t1, t2)
+    producer_hold     = max(0.0, ph) if ph is not None else None
     consumer_wait     = delta(t2, t3)
+    poll_wait         = delta(t3, t_found) if t_found is not None else None
+    # download_time captures the actual on-wire GET (MinIO) — distinct
+    # from the poll-wait the consumer paid before the object appeared.
+    download_time     = delta(t_found, t4) if t_found is not None else None
+    # transfer_visible is the legacy metric (t4 - t3); kept for DSF where
+    # there is no HEAD-poll loop and the recv_raw call blocks atomically.
     transfer_visible  = delta(t3, t4)
 
     return {
@@ -101,12 +112,15 @@ def harvest_one(path: pathlib.Path, system: str, colocation: str,
         "t1p": t1p,
         "t2": t2,
         "t3": t3,
+        "t_found": t_found,
         "t4": t4,
         "e2e": e2e,
         "compute": compute,
         "send_or_upload": send_or_upload,
         "producer_hold": producer_hold,
         "consumer_wait": consumer_wait,
+        "poll_wait": poll_wait,
+        "download_time": download_time,
         "transfer_visible": transfer_visible,
     }
 

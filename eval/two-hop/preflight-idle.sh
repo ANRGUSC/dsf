@@ -86,34 +86,39 @@ print(",".join(out))
     fi
   fi
 
-  # 2. Task pods in any namespace.
+  # 2. Non-terminal ODAG task pods (Pending/Running). Completed/Failed
+  #    pods that haven't been garbage-collected do not contend for
+  #    resources and are ignored.
   local task_pods
-  task_pods=$(kubectl get pods -A -l dsf-odag --no-headers 2>/dev/null | wc -l)
+  task_pods=$(kubectl get pods -A -l dsf-odag --no-headers --field-selector=status.phase!=Succeeded,status.phase!=Failed 2>/dev/null | wc -l)
   if [[ "$task_pods" != "0" ]]; then
-    yellow "[preflight] $task_pods ODAG task pods still alive"
+    yellow "[preflight] $task_pods non-terminal ODAG task pods alive"
     fail=1
   fi
 
-  # 3. Two-hop benchmark Jobs anywhere.
+  # 3. Two-hop benchmark Jobs/pods/services — exclude the MinIO
+  #    infrastructure (component=minio) which is meant to stay up
+  #    between cells.
+  local sel='app=two-hop,component notin (minio)'
+
   local twohop_jobs
-  twohop_jobs=$(kubectl get jobs -A -l app=two-hop --no-headers 2>/dev/null | wc -l)
+  twohop_jobs=$(kubectl get jobs -A -l "$sel" --no-headers 2>/dev/null | wc -l)
   if [[ "$twohop_jobs" != "0" ]]; then
-    yellow "[preflight] $twohop_jobs two-hop Jobs still alive"
+    yellow "[preflight] $twohop_jobs two-hop benchmark Jobs still alive"
     fail=1
   fi
 
   local twohop_pods
-  twohop_pods=$(kubectl get pods -A -l app=two-hop --no-headers 2>/dev/null | wc -l)
+  twohop_pods=$(kubectl get pods -A -l "$sel" --no-headers --field-selector=status.phase!=Succeeded,status.phase!=Failed 2>/dev/null | wc -l)
   if [[ "$twohop_pods" != "0" ]]; then
-    yellow "[preflight] $twohop_pods two-hop pods still alive"
+    yellow "[preflight] $twohop_pods non-terminal two-hop benchmark pods alive"
     fail=1
   fi
 
-  # 4. Leftover services for two-hop runs.
   local twohop_svcs
-  twohop_svcs=$(kubectl get svc -A -l app=two-hop --no-headers 2>/dev/null | wc -l)
+  twohop_svcs=$(kubectl get svc -A -l "$sel" --no-headers 2>/dev/null | wc -l)
   if [[ "$twohop_svcs" != "0" ]]; then
-    yellow "[preflight] $twohop_svcs two-hop services still alive"
+    yellow "[preflight] $twohop_svcs two-hop benchmark services still alive"
     fail=1
   fi
 

@@ -65,30 +65,41 @@ def main() -> int:
         region_name="us-east-1",
     )
 
+    # t3 — consumer enters waiting-for-data state.
     t3_wall = time.time()
     deadline = t3_wall + DEADLINE_S
-    ok = False
-    body_len = 0
+
+    # Poll HEAD until the object appears. This isolates poll-wait from
+    # actual download cost.
     while time.time() < deadline:
         try:
-            resp = s3.get_object(Bucket=BUCKET, Key=OBJECT)
-            data = resp["Body"].read()
-            body_len = len(data)
-            ok = (body_len == EXPECTED_BYTES)
+            s3.head_object(Bucket=BUCKET, Key=OBJECT)
             break
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
-            if code in ("NoSuchKey", "404"):
+            if code in ("NoSuchKey", "404", "NotFound"):
                 time.sleep(POLL_S)
                 continue
             raise
+
+    # t_found — object now exists on the store.
+    t_found_wall = time.time()
+
+    # GET the object.
+    resp = s3.get_object(Bucket=BUCKET, Key=OBJECT)
+    data = resp["Body"].read()
+
+    # t4 — full payload in memory.
     t4_wall = time.time()
+    body_len = len(data)
+    ok = (body_len == EXPECTED_BYTES)
 
     emit(
         "consumer",
         pod=os.environ.get("HOSTNAME", "?"),
         node=os.environ.get("NODE_NAME", "?"),
         t3_wall=t3_wall,
+        t_found_wall=t_found_wall,
         t4_wall=t4_wall,
         bytes=body_len,
         expected_bytes=EXPECTED_BYTES,

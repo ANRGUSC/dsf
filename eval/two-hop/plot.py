@@ -49,10 +49,12 @@ def load(csv_path: pathlib.Path):
         for r in csv.DictReader(f):
             try:
                 r["bytes"] = int(r["bytes"]) if r["bytes"] else 0
-                for k in ("t0", "t1", "t1p", "t2", "t3", "t4",
+                for k in ("t0", "t1", "t1p", "t2", "t3", "t_found", "t4",
                           "e2e", "compute", "send_or_upload",
-                          "producer_hold", "consumer_wait", "transfer_visible"):
-                    r[k] = float(r[k]) if r[k] else None
+                          "producer_hold", "consumer_wait",
+                          "poll_wait", "download_time", "transfer_visible"):
+                    if k in r:
+                        r[k] = float(r[k]) if r[k] else None
                 rows.append(r)
             except Exception as e:
                 print(f"[load] skipping row: {e}", file=sys.stderr)

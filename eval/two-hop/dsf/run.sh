@@ -104,15 +104,15 @@ for t in (d.get("status") or {}).get("tasks", []):
 
   # Logs (each pod emits one DSF_E0_TIMESTAMPS line).
   local prod_line cons_line
-  prod_line="$(kubectl -n default logs "$prod_pod" 2>/dev/null | grep -F 'DSF_E0_TIMESTAMPS ' | tail -1 | sed 's/^DSF_E0_TIMESTAMPS //' || true)"
-  cons_line="$(kubectl -n default logs "$cons_pod" 2>/dev/null | grep -F 'DSF_E0_TIMESTAMPS ' | tail -1 | sed 's/^DSF_E0_TIMESTAMPS //' || true)"
+  prod_line="$(kubectl -n "$NS" logs "$prod_pod" 2>/dev/null | grep -F 'DSF_E0_TIMESTAMPS ' | tail -1 | sed 's/^DSF_E0_TIMESTAMPS //' || true)"
+  cons_line="$(kubectl -n "$NS" logs "$cons_pod" 2>/dev/null | grep -F 'DSF_E0_TIMESTAMPS ' | tail -1 | sed 's/^DSF_E0_TIMESTAMPS //' || true)"
 
   # Pod API timestamps (RFC3339).
   local prod_started prod_finished cons_started cons_finished
-  prod_started=$(kubectl -n default get pod "$prod_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.startedAt}'  2>/dev/null || true)
-  prod_finished=$(kubectl -n default get pod "$prod_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.finishedAt}' 2>/dev/null || true)
-  cons_started=$(kubectl -n default get pod "$cons_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.startedAt}'  2>/dev/null || true)
-  cons_finished=$(kubectl -n default get pod "$cons_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.finishedAt}' 2>/dev/null || true)
+  prod_started=$(kubectl -n "$NS" get pod "$prod_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.startedAt}'  2>/dev/null || true)
+  prod_finished=$(kubectl -n "$NS" get pod "$prod_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.finishedAt}' 2>/dev/null || true)
+  cons_started=$(kubectl -n "$NS" get pod "$cons_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.startedAt}'  2>/dev/null || true)
+  cons_finished=$(kubectl -n "$NS" get pod "$cons_pod" -o jsonpath='{.status.containerStatuses[0].state.terminated.finishedAt}' 2>/dev/null || true)
 
   python3 - "$out_json" <<EOF
 import json, sys
@@ -200,8 +200,11 @@ run_cell() {
 
     harvest_run "$name" "$cell_dir" || yellow "[$cell_tag/$i] harvest had issues"
 
-    # Delete the ODAG to force the data-agent retention policy to purge per-run data.
-    kubectl -n "$NS" delete odag "$name" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    # Do NOT delete the ODAG — the controller's run-counter is derived
+    # from the count of existing runs, and manual deletion causes the
+    # next run to collide with run-001. retention.maxRuns + data.policy:
+    # immediate already cap on-disk storage; old terminal ODAG resources
+    # are cheap.
   done
 }
 
