@@ -696,21 +696,6 @@ func (s *Server) handleRunTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the highest existing run number to determine the next one.
-	s.mu.RLock()
-	maxRun := 0
-	for _, obj := range s.odags {
-		labels := obj.GetLabels()
-		if labels["dsf.io/template"] == name && obj.GetNamespace() == ns {
-			if n, err := strconv.Atoi(labels["dsf.io/run"]); err == nil && n > maxRun {
-				maxRun = n
-			}
-		}
-	}
-	s.mu.RUnlock()
-	runNum := maxRun + 1
-	odagName := fmt.Sprintf("%s-run-%03d", name, runNum)
-
 	// Extract spec from template, stripping template-only fields.
 	spec, _, _ := unstructured.NestedMap(tmplObj.Object, "spec")
 	delete(spec, "profiling")
@@ -718,32 +703,36 @@ func (s *Server) handleRunTemplate(w http.ResponseWriter, r *http.Request) {
 	delete(spec, "retention")
 	delete(spec, "description")
 
+	// Use generateName so K8s assigns a unique suffix. dsf.io/run is stamped
+	// by the controller from its SQL counter on first reconcile. Computing
+	// from a live-resource list is racy — any prior run that's been deleted
+	// resets the count and produces duplicate names that collide in
+	// dsf-history.db.
 	odag := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "dsf.io/v1",
 			"kind":       "ODAG",
 			"metadata": map[string]interface{}{
-				"name":      odagName,
-				"namespace": ns,
+				"generateName": fmt.Sprintf("%s-run-", name),
+				"namespace":    ns,
 				"labels": map[string]interface{}{
 					"dsf.io/template": name,
-					"dsf.io/run":      fmt.Sprintf("%d", runNum),
 				},
 			},
 			"spec": spec,
 		},
 	}
 
-	if _, err := s.dynClient.Resource(odagGVR).Namespace(ns).Create(
-		context.Background(), odag, metav1.CreateOptions{}); err != nil {
+	created, err := s.dynClient.Resource(odagGVR).Namespace(ns).Create(
+		context.Background(), odag, metav1.CreateOptions{})
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	writeJSON(w, map[string]interface{}{
-		"name":    odagName,
-		"run":     runNum,
-		"message": fmt.Sprintf("Created run %s from template %s", odagName, name),
+		"name":    created.GetName(),
+		"message": fmt.Sprintf("Created run %s from template %s", created.GetName(), name),
 	})
 }
 

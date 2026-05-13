@@ -796,29 +796,6 @@ func odagRunFromTemplate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get template %s: %w", templateName, err)
 	}
 
-	// Find the highest existing run number to determine the next one.
-	existing, err := dc.Resource(odagGVR).Namespace(namespace).List(
-		context.Background(), metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("dsf.io/template=%s", templateName),
-		})
-	if err != nil {
-		return fmt.Errorf("list runs: %w", err)
-	}
-	maxRun := 0
-	for _, item := range existing.Items {
-		labels := item.GetLabels()
-		if n, err := fmt.Sscanf(labels["dsf.io/run"], "%d", new(int)); err == nil && n > 0 {
-			v := 0
-			fmt.Sscanf(labels["dsf.io/run"], "%d", &v)
-			if v > maxRun {
-				maxRun = v
-			}
-		}
-	}
-	runNum := maxRun + 1
-
-	odagName := fmt.Sprintf("%s-run-%03d", templateName, runNum)
-
 	// Extract spec from template, stripping template-only fields.
 	spec, _, err := unstructured.NestedMap(tmpl.Object, "spec")
 	if err != nil {
@@ -829,29 +806,34 @@ func odagRunFromTemplate(cmd *cobra.Command, args []string) error {
 	delete(spec, "retention")
 	delete(spec, "description")
 
-	// Create ODAG CR.
+	// Use generateName so K8s assigns a unique suffix. The persistent run
+	// number (dsf.io/run) is stamped by the controller from its SQL counter
+	// on first reconcile — see deployODAG in cmd/odag-controller/main.go.
+	// Computing the number locally from a live-resource list is racy: any
+	// prior run that's been deleted resets the count and produces duplicate
+	// names that collide in dsf-history.db.
 	odag := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "dsf.io/v1",
 			"kind":       "ODAG",
 			"metadata": map[string]interface{}{
-				"name":      odagName,
-				"namespace": namespace,
+				"generateName": fmt.Sprintf("%s-run-", templateName),
+				"namespace":    namespace,
 				"labels": map[string]interface{}{
 					"dsf.io/template": templateName,
-					"dsf.io/run":      fmt.Sprintf("%d", runNum),
 				},
 			},
 			"spec": spec,
 		},
 	}
 
-	if _, err := dc.Resource(odagGVR).Namespace(namespace).Create(
-		context.Background(), odag, metav1.CreateOptions{}); err != nil {
+	created, err := dc.Resource(odagGVR).Namespace(namespace).Create(
+		context.Background(), odag, metav1.CreateOptions{})
+	if err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
 
-	fmt.Printf("Created run %s (run #%d from template %s)\n", odagName, runNum, templateName)
+	fmt.Printf("Created run %s (from template %s)\n", created.GetName(), templateName)
 	return nil
 }
 

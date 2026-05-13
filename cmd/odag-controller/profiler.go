@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -99,17 +101,31 @@ func initProfilerDB(dbPath string) (*sql.DB, error) {
 // --------------------------------------------------------------------------
 
 // nextRunID atomically increments and returns the next run number for a template.
+// Retries on SQLITE_BUSY: the busy_timeout pragma is per-connection and Go's
+// pool may hand out a connection that doesn't see another connection's lock,
+// so back off and retry a few times to cover bursts of concurrent run creations.
 func nextRunID(db *sql.DB, template string) (int, error) {
-	var count int
-	err := db.QueryRow(`
-		INSERT INTO run_counter (template, count) VALUES (?, 1)
-		ON CONFLICT(template) DO UPDATE SET count = count + 1
-		RETURNING count
-	`, template).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("nextRunID: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < 8; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(50*(1<<attempt)) * time.Millisecond)
+		}
+		var count int
+		err := db.QueryRow(`
+			INSERT INTO run_counter (template, count) VALUES (?, 1)
+			ON CONFLICT(template) DO UPDATE SET count = count + 1
+			RETURNING count
+		`, template).Scan(&count)
+		if err == nil {
+			return count, nil
+		}
+		lastErr = err
+		if !strings.Contains(err.Error(), "database is locked") &&
+			!strings.Contains(err.Error(), "SQLITE_BUSY") {
+			break
+		}
 	}
-	return count, nil
+	return 0, fmt.Errorf("nextRunID: %w", lastErr)
 }
 
 // --------------------------------------------------------------------------

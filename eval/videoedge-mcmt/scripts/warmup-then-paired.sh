@@ -35,14 +35,21 @@ WARM_LOG="$OUT/warmups.csv"
 
 run_dsf_once() {
     local idx=$1
-    kubectl -n dsf-system delete odags -l "dsf.io/template=${DSF_TPL}" --wait=false >/dev/null 2>&1 || true
-    sleep 5
+    # No delete-before-run: CLI uses generateName so every invocation
+    # produces a uniquely-named ODAG; the SQL counter assigns dsf.io/run.
     local start=$(date +%s)
-    "$REPO/bin/dsf" odag run $DSF_TPL -n dsf-system 2>&1 | tail -1
-    local run=""
+    local out
+    out=$("$REPO/bin/dsf" odag run $DSF_TPL -n dsf-system 2>&1)
+    echo "$out" | tail -1
+    local run
+    run=$(echo "$out" | sed -nE 's|Created run ([^ ]+).*|\1|p')
+    if [ -z "$run" ]; then
+        echo "  ERROR: could not parse run name from CLI output: $out"
+        echo "$idx,?,Failed,?,?,?,?" >> "$WARM_LOG"
+        return 1
+    fi
     for i in $(seq 1 90); do
         sleep 15
-        run=$(kubectl -n dsf-system get odags -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep "${DSF_TPL}-run" | sort | tail -1)
         local p=$(kubectl -n dsf-system get odag "$run" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
         [ "$p" = "Succeeded" ] || [ "$p" = "Failed" ] && break
     done

@@ -121,15 +121,24 @@ md5() { md5sum "$1" 2>/dev/null | awk '{print $1}'; }
 run_dsf() {
     local rep=$1
     local dest="$OUT/rep${rep}-dsf"
-    kubectl -n dsf-system delete odags -l "dsf.io/template=${DSF_TPL}" --wait=false >/dev/null 2>&1 || true
-    kubectl -n dsf-system delete odag ${DSF_TPL}-run-001 --wait=false >/dev/null 2>&1 || true
-    sleep 5
+    # No delete-before-run: the CLI now uses generateName so every rep gets
+    # a unique ODAG name (e.g. vemcmt-...-run-x7k4p) and the controller stamps
+    # dsf.io/run from the SQL counter. Prior runs accumulate in the cluster
+    # until the template's retention policy cleans them up — which is what
+    # the UI's template-runs tab wants to see.
     local start=$(date +%s)
-    "$REPO/bin/dsf" odag run $DSF_TPL -n dsf-system 2>&1 | tail -1
-    local run=""
+    local out
+    out=$("$REPO/bin/dsf" odag run $DSF_TPL -n dsf-system 2>&1)
+    echo "$out" | tail -1
+    local run
+    run=$(echo "$out" | sed -nE 's|Created run ([^ ]+).*|\1|p')
+    if [ -z "$run" ]; then
+        echo "  ERROR: could not parse run name from CLI output: $out"
+        echo "$rep,dsf,?,Failed,?,?,?,?,?" >> "$SUM"
+        return 1
+    fi
     for i in $(seq 1 90); do
         sleep 15
-        run=$(kubectl -n dsf-system get odags -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep "${DSF_TPL}-run" | sort | tail -1)
         local p=$(kubectl -n dsf-system get odag "$run" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
         [ "$p" = "Succeeded" ] || [ "$p" = "Failed" ] && break
     done
@@ -143,6 +152,9 @@ run_dsf() {
     local h=$(md5 "$dest/report.json")
     echo "$rep,dsf,$run,$phase,$ms,$wall,$bi,$bo,$h" >> "$SUM"
     echo "  -> DSF rep $rep: phase=$phase makespan=${ms}s wall=${wall}s bi=$bi bo=$bo"
+    # Post-capture cleanup: delete the completed ODAG and its pods so the
+    # next rep starts in a clean cluster. History is preserved in dsf-history.db.
+    kubectl -n dsf-system delete odag "$run" --wait=false >/dev/null 2>&1 || true
 }
 
 run_argo() {
@@ -178,11 +190,24 @@ print(int((fa-sa).total_seconds()))" 2>/dev/null)
     local h=$(md5 "$dest/report.json")
     echo "$rep,argo,$wf,$phase,$ms,$wall,NA,NA,$h" >> "$SUM"
     echo "  -> Argo rep $rep: phase=$phase makespan=${ms}s wall=${wall}s"
+    # Post-capture cleanup so the next rep starts clean.
+    kubectl -n argo delete workflow "$wf" --wait=false >/dev/null 2>&1 || true
+}
+
+# Wait for the cluster to actually be idle (all task pods terminated).
+wait_for_idle() {
+    for i in $(seq 1 30); do
+        local n=$(kubectl -n dsf-system get pods -l dsf-odag --no-headers 2>/dev/null | grep -vE "Succeeded|Completed" | wc -l)
+        local m=$(kubectl -n argo get pods --no-headers 2>/dev/null | grep -vE "Succeeded|Completed" | wc -l)
+        [ "$n" = "0" ] && [ "$m" = "0" ] && return 0
+        sleep 5
+    done
 }
 
 for r in $(seq 1 "$REPS"); do
     echo
     echo "==================== rep $r ===================="
+    wait_for_idle
     if (( r % 2 == 1 )); then
         run_dsf "$r" ; run_argo "$r"
     else

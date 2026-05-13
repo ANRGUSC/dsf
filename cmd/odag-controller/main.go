@@ -264,6 +264,13 @@ func deployODAG(dynClient dynamic.Interface, client *kubernetes.Clientset, obj *
 	}
 	key := namespace + "/" + odagName
 
+	// Stamp dsf.io/run from the SQL counter if missing. The CLI and ui-server
+	// create ODAGs via generateName without computing a run number, so the
+	// controller is the single source of truth. Doing this before the phase
+	// gate is intentional: even on restart, an ODAG that never got stamped
+	// gets stamped now, so the profiler and UI see a stable run number.
+	ensureRunLabel(dynClient, obj)
+
 	// Phase gate: only fresh (unphased) ODAGs get scheduled.
 	// Prevents re-execution of already-running, completed, or failed ODAGs
 	// when the watcher re-delivers ADDED events (e.g., on controller restart).
@@ -1397,6 +1404,57 @@ func profileODAGIfTemplated(dynClient dynamic.Interface, client *kubernetes.Clie
 
 	profileCompletedRun(dynClient, client, profilerDB, namespace, odagName, templateName, runNum,
 		tasks, assignMap, taskStartTimes, taskCompletionTimes, makespan)
+}
+
+// ensureRunLabel stamps dsf.io/run on a template-derived ODAG when missing.
+// The number comes from the SQL run_counter so it survives ODAG deletes —
+// unlike the live-resource-list approach previously used by the CLI and
+// ui-server, which gave every fresh run the same number after the prior
+// run was cleaned up. Idempotent: a no-op when the label is already set
+// or when the ODAG isn't template-derived. Mutates the in-memory obj so
+// the rest of deployODAG sees the updated label.
+func ensureRunLabel(dynClient dynamic.Interface, obj *unstructured.Unstructured) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	if labels["dsf.io/run"] != "" {
+		return
+	}
+	tpl := labels["dsf.io/template"]
+	if tpl == "" {
+		return
+	}
+	if profilerDB == nil {
+		log.Printf("[odag-ctrl] cannot stamp run label for %s/%s: profilerDB unavailable",
+			obj.GetNamespace(), obj.GetName())
+		return
+	}
+	runNum, err := nextRunID(profilerDB, tpl)
+	if err != nil {
+		log.Printf("[odag-ctrl] nextRunID(%s) failed: %v", tpl, err)
+		return
+	}
+	patch := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"labels": map[string]interface{}{
+				"dsf.io/run": fmt.Sprintf("%d", runNum),
+			},
+		},
+	}
+	data, _ := json.Marshal(patch)
+	if _, err := dynClient.Resource(odagGVR).Namespace(obj.GetNamespace()).Patch(
+		context.Background(), obj.GetName(), types.MergePatchType, data,
+		metav1.PatchOptions{},
+	); err != nil {
+		log.Printf("[odag-ctrl] patch run label on %s/%s failed: %v",
+			obj.GetNamespace(), obj.GetName(), err)
+		return
+	}
+	labels["dsf.io/run"] = fmt.Sprintf("%d", runNum)
+	obj.SetLabels(labels)
+	log.Printf("[odag-ctrl] stamped %s/%s with dsf.io/run=%d (template %s)",
+		obj.GetNamespace(), obj.GetName(), runNum, tpl)
 }
 
 func updateODAGPhase(dynClient dynamic.Interface, namespace, name, phase, message string) {
