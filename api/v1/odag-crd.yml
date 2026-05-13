@@ -84,6 +84,32 @@ spec:
                             items:
                               type: string
                             description: If set, scheduler will only place this task on one of these nodes.
+                      volumes:
+                        type: array
+                        description: >
+                          Pod-level volumes appended to the controller's base mounts
+                          (dsf-outputs, dsf-shared). Each item is a standard K8s
+                          corev1.Volume. Reserved names ("dsf-outputs", "dsf-shared")
+                          are rejected at parse time.
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                      volumeMounts:
+                        type: array
+                        description: >
+                          Container-level volume mounts appended to the controller's
+                          base mounts. Each item is a standard K8s corev1.VolumeMount.
+                          Names must match a declared volume (either user-defined or
+                          controller-owned).
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                      securityContext:
+                        type: object
+                        description: >
+                          Pod-level securityContext (supplementalGroups, runAsUser,
+                          fsGroup, etc.). Applied verbatim as corev1.PodSecurityContext.
+                        x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

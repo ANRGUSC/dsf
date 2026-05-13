@@ -385,6 +385,82 @@ type cdagTaskSpec struct {
 	DataRate     string // e.g. "1MB/s" — used by locality scheduler
 	Constraints  []string
 	UserEnv      []corev1.EnvVar
+	// Raw K8s pod-spec passthrough. CDAG has no controller-owned volumes
+	// (streaming uses ZMQ, not file transport), so user volumes pass through
+	// without reserved-name checks.
+	Volumes         []corev1.Volume
+	VolumeMounts    []corev1.VolumeMount
+	SecurityContext *corev1.PodSecurityContext
+}
+
+// parseVolumes/parseVolumeMounts/parsePodSecurityContext round-trip raw
+// unstructured values through JSON into typed corev1 types. CDAG has no
+// reserved volume names so collision checks are not needed.
+func parseCDAGVolumes(raw interface{}, taskName string) []corev1.Volume {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[cdag-ctrl] WARN task=%s: marshal volumes: %v", taskName, err)
+		return nil
+	}
+	var vols []corev1.Volume
+	if err := json.Unmarshal(b, &vols); err != nil {
+		log.Printf("[cdag-ctrl] WARN task=%s: unmarshal volumes: %v", taskName, err)
+		return nil
+	}
+	out := make([]corev1.Volume, 0, len(vols))
+	for _, v := range vols {
+		if v.Name == "" {
+			log.Printf("[cdag-ctrl] WARN task=%s: skipping volume with empty name", taskName)
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func parseCDAGVolumeMounts(raw interface{}, taskName string) []corev1.VolumeMount {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[cdag-ctrl] WARN task=%s: marshal volumeMounts: %v", taskName, err)
+		return nil
+	}
+	var mounts []corev1.VolumeMount
+	if err := json.Unmarshal(b, &mounts); err != nil {
+		log.Printf("[cdag-ctrl] WARN task=%s: unmarshal volumeMounts: %v", taskName, err)
+		return nil
+	}
+	out := make([]corev1.VolumeMount, 0, len(mounts))
+	for _, m := range mounts {
+		if m.Name == "" || m.MountPath == "" {
+			log.Printf("[cdag-ctrl] WARN task=%s: skipping volumeMount with empty name or mountPath", taskName)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func parseCDAGPodSecurityContext(raw interface{}, taskName string) *corev1.PodSecurityContext {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[cdag-ctrl] WARN task=%s: marshal securityContext: %v", taskName, err)
+		return nil
+	}
+	var sc corev1.PodSecurityContext
+	if err := json.Unmarshal(b, &sc); err != nil {
+		log.Printf("[cdag-ctrl] WARN task=%s: unmarshal securityContext: %v", taskName, err)
+		return nil
+	}
+	return &sc
 }
 
 func extractTasks(obj *unstructured.Unstructured) []cdagTaskSpec {
@@ -424,11 +500,16 @@ func extractTasks(obj *unstructured.Unstructured) []cdagTaskSpec {
 				}
 			}
 		}
+		vols := parseCDAGVolumes(t["volumes"], name)
+		vmounts := parseCDAGVolumeMounts(t["volumeMounts"], name)
+		secCtx := parseCDAGPodSecurityContext(t["securityContext"], name)
+
 		tasks = append(tasks, cdagTaskSpec{
 			Name: name, Image: image, Command: cmd, Args: args,
 			Dependencies: deps, Replicas: replicas,
 			Constraints: constraints, CPU: cpu, Memory: mem,
 			DataRate: dataRate, UserEnv: userEnv,
+			Volumes: vols, VolumeMounts: vmounts, SecurityContext: secCtx,
 		})
 	}
 	return tasks
@@ -551,7 +632,9 @@ func ensurePod(client *kubernetes.Clientset, namespace, podName, cdagName string
 			}},
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy: restartPolicy,
+			RestartPolicy:   restartPolicy,
+			SecurityContext: task.SecurityContext,
+			Volumes:         task.Volumes,
 			Containers: []corev1.Container{{
 				Name:            task.Name,
 				Image:           task.Image,
@@ -560,6 +643,7 @@ func ensurePod(client *kubernetes.Clientset, namespace, podName, cdagName string
 				Args:            task.Args,
 				Env:             envVars,
 				Resources:       resources,
+				VolumeMounts:    task.VolumeMounts,
 				Ports: []corev1.ContainerPort{
 					{Name: "zmq", ContainerPort: zmqPort, Protocol: corev1.ProtocolTCP},
 					{Name: "metrics", ContainerPort: 8090, Protocol: corev1.ProtocolTCP},

@@ -84,6 +84,29 @@ spec:
                             type: array
                             items:
                               type: string
+                      volumes:
+                        type: array
+                        description: >
+                          Pod-level volumes for the task. Each item is a standard K8s
+                          corev1.Volume. CDAG has no controller-owned volume names, so
+                          all entries pass through unmodified.
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                      volumeMounts:
+                        type: array
+                        description: >
+                          Container-level volume mounts. Each item is a standard K8s
+                          corev1.VolumeMount. Names must match a declared volume.
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                      securityContext:
+                        type: object
+                        description: >
+                          Pod-level securityContext (supplementalGroups, runAsUser,
+                          fsGroup, etc.). Applied verbatim as corev1.PodSecurityContext.
+                        x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

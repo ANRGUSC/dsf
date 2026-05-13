@@ -59,9 +59,13 @@ spec:
           volumeMounts:
             - { name: data, mountPath: /data }
       volumes:
+        # hostPath instead of emptyDir so the bucket survives pod restarts.
+        # MinIO is already nodeSelector-pinned to anrg-9, so this path is
+        # always served by the same node's local disk.
         - name: data
-          emptyDir:
-            sizeLimit: 20Gi
+          hostPath:
+            path: /var/lib/dsf-minio-e0
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

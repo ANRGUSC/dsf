@@ -4,35 +4,43 @@ FileTransport: push-based p2p file transport for one-shot ODAGs.
 Flow
 ----
 send(payload):
-    1. Write payload to this task's local hostPath output file.
+    1. PUT payload to the local data-agent at /<odag>/<task>/output with a
+       Content-MD5 header. The agent installs atomically (temp file → fsync
+       → rename → fsync parent dir) and sets the .dsf-ready marker only
+       after the bytes are durably on disk. This is the SAME install path
+       used for cross-node receive — local and remote handoff are
+       semantically identical from the SDK's perspective.
     2. POST /push/<odag>/<task> to the local data-agent with the list of
-       remote (cross-node) successors. The data-agent handles the transfer
-       in a background goroutine and sets DataReady when done.
-    3. Return immediately — the task pod can continue and exit without waiting.
+       remote (cross-node) successors. The agent persists the per-successor
+       transfer queue durably before responding 202, then handles transfers
+       in a background goroutine.
+    3. Return immediately — the pod can continue and exit without waiting.
 
 recv(peer) / recv_all():
     Always a local file read. The odag-controller starts a task pod only
-    after all upstream deps are DataReady, so the file is guaranteed present.
+    after all upstream deps' .dsf-ready markers are present on THIS node, so
+    the file is guaranteed installed.
 
 close():
-    Sets state=Done and returns. The pod exits immediately regardless of
-    whether the data-agent transfer is still in progress (option-3 decoupled
-    transfer). The data-agent completes the push independently from the
-    local file on the hostPath.
+    Sets task state = ComputeDone and returns. The pod exits immediately
+    regardless of whether the data-agent transfer is still in progress.
 
-State protocol
---------------
-Tasks signal their state to the local data-agent (reachable at DSF_NODE_IP:
-8081) via PUT /state/<odag>/<task>. The controller queries this endpoint to
-decide when to start downstream tasks (DataReady trigger, not PodSucceeded).
+State protocol (locked, see project_atc2026_data_plane_state_model)
+-------------------------------------------------------------------
+Two independent signals tracked by the local data-agent at DSF_NODE_IP:8081:
 
-States set by the SDK:
-    Executing   — on FileTransport.__init__()
-    Done        — on close()
+  Task lifecycle      PUT /state/<odag>/<task>  body ∈ {Pending, Running,
+                                                       ComputeDone, Failed}
+  Local data ready    PUT /ready/<odag>/<task>  presence-only marker
 
-States set by the data-agent (after /push/ completes):
-    DataReady   — all remote pushes succeeded
-    Failed      — one or more pushes failed after retries
+SDK writes:
+    Running       — on FileTransport.__init__()
+    ComputeDone   — on close()
+
+The agent (not the SDK) is the only writer of .dsf-ready, both for local
+installs (when the SDK PUTs through it) and remote installs (when another
+node pushes here). The SDK never writes Failed for transfer errors — that
+is a per-successor transfer-state concern, not a task-lifecycle concern.
 
 Environment variables injected by odag-controller
 --------------------------------------------------
@@ -50,12 +58,22 @@ Environment variables injected by odag-controller
     (<SUCC> is the task name uppercased with hyphens replaced by underscores)
 """
 
+import hashlib
 import json
 import os
 import urllib.request
 
 
 _DATA_AGENT_PORT = 8081
+# Generous local-install timeout: the PUT is to localhost over hostPort, so
+# wall-clock is bounded by local disk write + fsync. 5 minutes covers any
+# payload size we expect on edge nodes (multi-GB would already exceed disk
+# headroom). Not the place to micro-tune.
+_INSTALL_TIMEOUT_S = 300
+
+# Wire-level headers — must match cmd/data-agent/main.go constants.
+_HDR_CONTENT_SHA256 = "X-Wayline-Content-SHA256"
+_HDR_UNCOMPRESSED_LENGTH = "X-Wayline-Uncompressed-Length"
 
 
 class FileTransport:
@@ -75,13 +93,14 @@ class FileTransport:
         self.output_dir: str = os.environ["DSF_OUTPUT_DIR"]
         self.node_name: str = os.environ.get("NODE_NAME", "")
         self.node_ip: str = os.environ.get("DSF_NODE_IP", "")
-        self._set_state("Executing")
+        self._set_task_state("Running")
 
     # ------------------------------------------------------------------ #
     # state protocol                                                        #
     # ------------------------------------------------------------------ #
 
-    def _set_state(self, state: str) -> None:
+    def _set_task_state(self, state: str) -> None:
+        """Write a value from the locked task-state vocabulary."""
         if not self.node_ip:
             return
         url = f"http://{self.node_ip}:{_DATA_AGENT_PORT}/state/{self.odag_name}/{self.task_name}"
@@ -90,7 +109,39 @@ class FileTransport:
             with urllib.request.urlopen(req, timeout=5):
                 pass
         except Exception as e:
-            print(f"[{self.task_name}] WARNING: failed to set state={state}: {e}", flush=True)
+            print(f"[{self.task_name}] WARNING: failed to set task state={state}: {e}", flush=True)
+
+    def _install_local(self, payload: bytes) -> None:
+        """
+        PUT payload through the local data-agent so it goes through the
+        same atomic install path (temp → fsync → rename → fsync parent →
+        .dsf-ready marker) used for remote receives. Local and remote
+        handoff share one code path; the SDK is a thin client.
+
+        Computes X-Wayline-Content-SHA256 (hex) over the uncompressed
+        payload so the agent can verify the installed digest matches what
+        was sent (idempotency + integrity).
+        """
+        if not self.node_ip:
+            raise RuntimeError("DSF_NODE_IP not set; cannot install via data-agent")
+        digest = hashlib.sha256(payload).hexdigest()
+        url = f"http://{self.node_ip}:{_DATA_AGENT_PORT}/{self.odag_name}/{self.task_name}/output"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            method="PUT",
+            headers={
+                _HDR_CONTENT_SHA256: digest,
+                _HDR_UNCOMPRESSED_LENGTH: str(len(payload)),
+                "Content-Length": str(len(payload)),
+                "Content-Type": "application/octet-stream",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=_INSTALL_TIMEOUT_S) as resp:
+            if resp.status != 200:
+                raise RuntimeError(
+                    f"data-agent install rejected with status {resp.status}"
+                )
 
     # ------------------------------------------------------------------ #
     # send                                                                  #
@@ -98,24 +149,19 @@ class FileTransport:
 
     def send(self, payload: bytes) -> None:
         """
-        Write payload locally and ask the data-agent to push to remote successors.
-        Returns immediately — the data-agent handles the transfer independently.
+        Install payload via the local data-agent (atomic + marker), then
+        ask the agent to push to remote successors. Returns once the local
+        install completes; remote transfers happen in the background.
         """
-        # 1. Write to local hostPath (covers same-node successors and our own storage).
-        os.makedirs(self.output_dir, exist_ok=True)
-        output_path = os.path.join(self.output_dir, "output")
-        with open(output_path, "wb") as f:
-            f.write(payload)
+        # 1. Local install via the data-agent. The agent writes a temp file,
+        # fsyncs, renames into place, fsyncs the parent dir, then writes the
+        # .dsf-ready marker. Same-node consumers can proceed as soon as this
+        # call returns. The SDK never touches the hostPath directly.
+        self._install_local(payload)
         print(
-            f"[{self.task_name}] wrote {len(payload)} bytes to {output_path}",
+            f"[{self.task_name}] installed {len(payload)} bytes via local data-agent",
             flush=True,
         )
-
-        # Signal DataReady on this node immediately after the local write.
-        # Same-node successors can now be scheduled without waiting for any
-        # cross-node transfer. Cross-node successors get their own DataReady
-        # signal on their node when the data-agent push arrives there.
-        self._set_state("DataReady")
 
         # 2. Build list of cross-node successors for the data-agent to push to.
         succs_env = os.environ.get("DSF_SUCCESSORS", "")
@@ -134,7 +180,9 @@ class FileTransport:
                 continue
             successors.append({"name": succ, "host": succ_host, "node": succ_node})
 
-        # 3. Hand off to data-agent (responds 200 immediately, pushes in background).
+        # 3. Hand off to data-agent. The agent durably persists the per-successor
+        # queue entries and Pending state files before responding 202, so
+        # this call may take a few hundred ms for many successors.
         self._request_push(successors)
 
     def _request_push(self, successors: list) -> None:
@@ -147,7 +195,7 @@ class FileTransport:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=5):
+            with urllib.request.urlopen(req, timeout=30):
                 pass
             print(
                 f"[{self.task_name}] handed off push to data-agent "
@@ -195,8 +243,9 @@ class FileTransport:
 
     def close(self) -> None:
         """
-        Return immediately. The pod exits.
-        The data-agent sets DataReady independently once the push completes.
-        For leaf tasks (no send()), downstream scheduling uses PodSucceeded directly.
+        Signal that the task's compute phase has finished cleanly, then
+        return. The pod exits immediately. The data-agent completes any
+        in-flight transfers independently; per-successor transfer state
+        captures their outcome.
         """
-        pass
+        self._set_task_state("ComputeDone")

@@ -468,10 +468,26 @@ func processReadyTasks(dynClient dynamic.Interface, client *kubernetes.Clientset
 	tasks := extractTasks(odagObj)
 
 	// Collect pods for this ODAG from the in-memory cache (no API call).
+	// Filter by OwnerReferences UID, not just the ODAG name label — when an
+	// ODAG is deleted and recreated with the same name (common during eval
+	// debugging cycles), pods from the previous incarnation can linger in
+	// the cache. Without the UID check, a stale Failed pod from a prior
+	// run would falsely trigger the failed-state aggregator on the new
+	// run. UID match is atomic per ODAG instance.
 	var podItems []corev1.Pod
 	podCache.Range(func(_, val interface{}) bool {
 		p := val.(*corev1.Pod)
-		if p.Namespace == namespace && p.Labels[labelODAGName] == odagName {
+		if p.Namespace != namespace || p.Labels[labelODAGName] != odagName {
+			return true
+		}
+		ownedByThisODAG := false
+		for _, or := range p.OwnerReferences {
+			if or.UID == ownerUID {
+				ownedByThisODAG = true
+				break
+			}
+		}
+		if ownedByThisODAG {
 			podItems = append(podItems, *p)
 		}
 		return true
@@ -554,6 +570,100 @@ type taskSpec struct {
 	Memory         string
 	Constraints    []string
 	UserEnv        []corev1.EnvVar
+	// Raw K8s pod-spec passthrough. User volumes are appended after the
+	// controller's base mounts (dsf-outputs, dsf-shared); reserved names are
+	// rejected at parse time. SecurityContext is applied at the pod level.
+	Volumes         []corev1.Volume
+	VolumeMounts    []corev1.VolumeMount
+	SecurityContext *corev1.PodSecurityContext
+}
+
+// reservedVolumeNames are the volumes the controller owns; user task specs
+// may not declare volumes or volumeMounts with these names.
+var reservedVolumeNames = map[string]bool{
+	"dsf-outputs": true,
+	"dsf-shared":  true,
+}
+
+// parseVolumes round-trips the unstructured value through JSON into typed
+// corev1.Volume. Drops (with a warning) entries whose name collides with a
+// controller-owned mount. Returns nil on any malformed input.
+func parseVolumes(raw interface{}, taskName string) []corev1.Volume {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[odag-ctrl] WARN task=%s: marshal volumes: %v", taskName, err)
+		return nil
+	}
+	var vols []corev1.Volume
+	if err := json.Unmarshal(b, &vols); err != nil {
+		log.Printf("[odag-ctrl] WARN task=%s: unmarshal volumes: %v", taskName, err)
+		return nil
+	}
+	out := make([]corev1.Volume, 0, len(vols))
+	for _, v := range vols {
+		if v.Name == "" {
+			log.Printf("[odag-ctrl] WARN task=%s: skipping volume with empty name", taskName)
+			continue
+		}
+		if reservedVolumeNames[v.Name] {
+			log.Printf("[odag-ctrl] WARN task=%s: dropping volume %q (reserved name)", taskName, v.Name)
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// parseVolumeMounts mirrors parseVolumes for corev1.VolumeMount.
+func parseVolumeMounts(raw interface{}, taskName string) []corev1.VolumeMount {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[odag-ctrl] WARN task=%s: marshal volumeMounts: %v", taskName, err)
+		return nil
+	}
+	var mounts []corev1.VolumeMount
+	if err := json.Unmarshal(b, &mounts); err != nil {
+		log.Printf("[odag-ctrl] WARN task=%s: unmarshal volumeMounts: %v", taskName, err)
+		return nil
+	}
+	out := make([]corev1.VolumeMount, 0, len(mounts))
+	for _, m := range mounts {
+		if m.Name == "" || m.MountPath == "" {
+			log.Printf("[odag-ctrl] WARN task=%s: skipping volumeMount with empty name or mountPath", taskName)
+			continue
+		}
+		if reservedVolumeNames[m.Name] {
+			log.Printf("[odag-ctrl] WARN task=%s: dropping volumeMount %q (reserved name)", taskName, m.Name)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// parsePodSecurityContext round-trips the unstructured value into a typed
+// corev1.PodSecurityContext.
+func parsePodSecurityContext(raw interface{}, taskName string) *corev1.PodSecurityContext {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		log.Printf("[odag-ctrl] WARN task=%s: marshal securityContext: %v", taskName, err)
+		return nil
+	}
+	var sc corev1.PodSecurityContext
+	if err := json.Unmarshal(b, &sc); err != nil {
+		log.Printf("[odag-ctrl] WARN task=%s: unmarshal securityContext: %v", taskName, err)
+		return nil
+	}
+	return &sc
 }
 
 func extractTasks(obj *unstructured.Unstructured) []taskSpec {
@@ -613,6 +723,10 @@ func extractTasks(obj *unstructured.Unstructured) []taskSpec {
 			}
 		}
 
+		vols := parseVolumes(t["volumes"], name)
+		vmounts := parseVolumeMounts(t["volumeMounts"], name)
+		secCtx := parsePodSecurityContext(t["securityContext"], name)
+
 		tasks = append(tasks, taskSpec{
 			Name:           name,
 			Image:          image,
@@ -622,10 +736,13 @@ func extractTasks(obj *unstructured.Unstructured) []taskSpec {
 			DataSize:       dataSize,
 			Runtime:        runtimeF,
 			RuntimeProfile: rtProfile,
-			Constraints:  constraints,
-			CPU:          cpu,
-			Memory:       mem,
-			UserEnv:      userEnv,
+			Constraints:    constraints,
+			CPU:            cpu,
+			Memory:         mem,
+			UserEnv:        userEnv,
+			Volumes:        vols,
+			VolumeMounts:   vmounts,
+			SecurityContext: secCtx,
 		})
 	}
 	return tasks
@@ -787,6 +904,31 @@ func ensurePod(client *kubernetes.Clientset, namespace, odagName string, task ta
 	resources := parseResources(task.CPU, task.Memory)
 	hostPathType := corev1.HostPathDirectoryOrCreate
 
+	baseVolumes := []corev1.Volume{
+		{
+			Name: "dsf-outputs",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: dataOutputPath,
+					Type: &hostPathType,
+				},
+			},
+		},
+		{
+			Name: "dsf-shared",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/shared/dsf-outputs",
+					Type: &hostPathType,
+				},
+			},
+		},
+	}
+	baseMounts := []corev1.VolumeMount{
+		{Name: "dsf-outputs", MountPath: dataOutputPath},
+		{Name: "dsf-shared", MountPath: "/shared/dsf-outputs"},
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -803,27 +945,9 @@ func ensurePod(client *kubernetes.Clientset, namespace, odagName string, task ta
 			}},
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Volumes: []corev1.Volume{
-				{
-					Name: "dsf-outputs",
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: dataOutputPath,
-							Type: &hostPathType,
-						},
-					},
-				},
-				{
-					Name: "dsf-shared",
-					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{
-							Path: "/shared/dsf-outputs",
-							Type: &hostPathType,
-						},
-					},
-				},
-			},
+			RestartPolicy:   corev1.RestartPolicyNever,
+			SecurityContext: task.SecurityContext,
+			Volumes:         append(baseVolumes, task.Volumes...),
 			Containers: []corev1.Container{{
 				Name:            task.Name,
 				Image:           task.Image,
@@ -832,16 +956,7 @@ func ensurePod(client *kubernetes.Clientset, namespace, odagName string, task ta
 				Args:            task.Args,
 				Env:             envVars,
 				Resources:       resources,
-				VolumeMounts: []corev1.VolumeMount{
-					{
-						Name:      "dsf-outputs",
-						MountPath: dataOutputPath,
-					},
-					{
-						Name:      "dsf-shared",
-						MountPath: "/shared/dsf-outputs",
-					},
-				},
+				VolumeMounts:    append(baseMounts, task.VolumeMounts...),
 			}},
 		},
 	}
@@ -907,10 +1022,12 @@ func parseDataSizeBytes(s string) int64 {
 // for every call.
 var httpClient = &http.Client{Timeout: 2 * time.Second}
 
-// isDataReady queries the data-agent on nodeIP and returns true when the task
-// has signalled DataReady (or Succeeded, which implies data was already ready).
+// isDataReady asks the data-agent on nodeIP whether the producer task's
+// output is locally installed on that node (i.e. .dsf-ready exists). This is
+// the only data-plane question the scheduler asks; it never reads task state
+// to decide downstream scheduling. Returns true on body == "true".
 func isDataReady(nodeIP, odagName, taskName string) bool {
-	url := fmt.Sprintf("http://%s:%d/state/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
+	url := fmt.Sprintf("http://%s:%d/ready/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
 	resp, err := httpClient.Get(url)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return false
@@ -920,24 +1037,34 @@ func isDataReady(nodeIP, odagName, taskName string) bool {
 	if err != nil {
 		return false
 	}
-	state := strings.TrimSpace(string(body))
-	return state == "DataReady"
+	return strings.TrimSpace(string(body)) == "true"
 }
 
-// resetTaskState writes "Scheduled" to the data-agent before pod creation,
-// clearing any stale state left by a previous run of the same ODAG.
+// resetTaskState prepares a (node, task) for a fresh run: writes "Pending" to
+// .dsf-task-state and clears any stale .dsf-ready marker left by a previous
+// run of the same ODAG. The two endpoints are independent — task state and
+// data availability are tracked separately.
 func resetTaskState(nodeIP, odagName, taskName string) {
+	// Task state -> Pending.
 	url := fmt.Sprintf("http://%s:%d/state/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
-	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader("Scheduled"))
-	if err != nil {
-		return
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader("Pending"))
+	if err == nil {
+		if resp, err := httpClient.Do(req); err != nil {
+			log.Printf("[odag-ctrl] resetTaskState state %s/%s: %v", odagName, taskName, err)
+		} else {
+			resp.Body.Close()
+		}
 	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Printf("[odag-ctrl] resetTaskState %s/%s: %v", odagName, taskName, err)
-		return
+	// Clear stale data-ready marker.
+	readyURL := fmt.Sprintf("http://%s:%d/ready/%s/%s", nodeIP, dataAgentPort, odagName, taskName)
+	delReq, err := http.NewRequest(http.MethodDelete, readyURL, nil)
+	if err == nil {
+		if resp, err := httpClient.Do(delReq); err != nil {
+			log.Printf("[odag-ctrl] resetTaskState ready %s/%s: %v", odagName, taskName, err)
+		} else {
+			resp.Body.Close()
+		}
 	}
-	resp.Body.Close()
 }
 
 // querySending returns true if the data-agent reports sending=true for the task.
@@ -1051,7 +1178,7 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 			ts["startTime"] = pod.Status.StartTime.UTC().Format(time.RFC3339Nano)
 		}
 		podPhase := "Pending"
-		taskState := "Scheduled" // default when pod exists but not yet Running
+		taskState := "Pending" // default before the SDK has had a chance to mark Running
 		switch pod.Status.Phase {
 		case corev1.PodRunning:
 			podPhase = "Running"
@@ -1060,17 +1187,17 @@ func updateTaskStatuses(dynClient dynamic.Interface,
 				if s := queryTaskState(ni.ip, odagName, taskName); s != "" {
 					taskState = s
 				} else {
-					taskState = "Executing"
+					taskState = "Running"
 				}
 				if querySending(ni.ip, odagName, taskName) {
 					ts["sending"] = true
 				}
 			} else {
-				taskState = "Executing"
+				taskState = "Running"
 			}
 		case corev1.PodSucceeded:
 			podPhase = "Succeeded"
-			taskState = "Done" // pod exited cleanly; data-agent state irrelevant
+			taskState = "ComputeDone" // pod exited cleanly
 			for _, cs := range pod.Status.ContainerStatuses {
 				if cs.State.Terminated != nil {
 					ts["completionTime"] = cs.State.Terminated.FinishedAt.UTC().Format(time.RFC3339Nano)
@@ -1178,31 +1305,47 @@ func updateActualFlows(dynClient dynamic.Interface, namespace, odagName string, 
 }
 
 func checkODAGCompletion(dynClient dynamic.Interface, client *kubernetes.Clientset, pods []corev1.Pod, namespace, odagName string, totalTasks int) {
-	if len(pods) < totalTasks {
-		return // not all layers launched yet
-	}
-	allSucceeded := true
-	anyFailed := false
+	// First pass: any Failed pod is terminal regardless of how many other
+	// pods exist. The previous version returned early when len(pods) <
+	// totalTasks, so a task that failed BEFORE its downstream pods were
+	// created would never aggregate into ODAG.status.phase — leaving the
+	// ODAG stuck Running forever (post-experiment-todos #5b, observed on
+	// wpf-heft-run-019).
 	for _, pod := range pods {
-		switch pod.Status.Phase {
-		case corev1.PodSucceeded:
-		case corev1.PodFailed:
-			anyFailed = true
-			allSucceeded = false
-		default:
-			allSucceeded = false
+		if pod.Status.Phase != corev1.PodFailed {
+			continue
+		}
+		taskName := pod.Labels[labelTaskName]
+		reason := "pod failed"
+		if len(pod.Status.ContainerStatuses) > 0 {
+			for _, cs := range pod.Status.ContainerStatuses {
+				if cs.State.Terminated != nil && cs.State.Terminated.Reason != "" {
+					reason = cs.State.Terminated.Reason
+					break
+				}
+			}
+		}
+		msg := fmt.Sprintf("task %q failed (%s)", taskName, reason)
+		updateODAGPhase(dynClient, namespace, odagName, "Failed", msg)
+		log.Printf("[odag-ctrl] ODAG %s/%s Failed: %s", namespace, odagName, msg)
+		return
+	}
+
+	// Second pass: success only if every task has a Succeeded pod.
+	if len(pods) < totalTasks {
+		return // not all layers launched yet; no decision possible
+	}
+	for _, pod := range pods {
+		if pod.Status.Phase != corev1.PodSucceeded {
+			return // still progressing
 		}
 	}
-	if anyFailed {
-		updateODAGPhase(dynClient, namespace, odagName, "Failed", "one or more task pods failed")
-	} else if allSucceeded {
-		makespan := computeMakespan(pods)
-		updateODAGCompletion(dynClient, namespace, odagName, makespan)
-		log.Printf("[odag-ctrl] ODAG %s/%s Succeeded (makespan: %.2fs)", namespace, odagName, makespan)
+	makespan := computeMakespan(pods)
+	updateODAGCompletion(dynClient, namespace, odagName, makespan)
+	log.Printf("[odag-ctrl] ODAG %s/%s Succeeded (makespan: %.2fs)", namespace, odagName, makespan)
 
-		// Trigger profiling and data cleanup if this ODAG was created from a template.
-		go profileODAGIfTemplated(dynClient, client, namespace, odagName, pods, makespan)
-	}
+	// Trigger profiling and data cleanup if this ODAG was created from a template.
+	go profileODAGIfTemplated(dynClient, client, namespace, odagName, pods, makespan)
 }
 
 // profileODAGIfTemplated checks if a completed ODAG was created from a template
