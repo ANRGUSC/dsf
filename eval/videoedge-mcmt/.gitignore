@@ -1,0 +1,25 @@
+# Models are downloaded + converted to OpenVINO IR at build time. They live
+# in container images; the working copies here are scratch.
+models/*.onnx
+models/*.xml
+models/*.bin
+models/*.weights
+models/*.pt
+models/yolov8n_openvino_model/
+
+# AI City clips are big; we slice them once and stage on nodes.
+dataset/clips/
+dataset/source/
+
+# Sweep results — regenerated per run.
+results/
+!results/.gitkeep
+
+# Figure outputs — regenerated.
+figures/*.png
+figures/*.pdf
+
+# Python / docker scratch
+__pycache__/
+*.pyc
+.pytest_cache/
