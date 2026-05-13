@@ -46,6 +46,7 @@ def preprocess_frames(
     out_dir: Union[str, Path],
     target_size: Tuple[int, int] = (640, 640),
     quality: int = 88,
+    fmt: str = "png",
 ) -> dict:
     """
     Resize every frame_*.jpg in in_dir to target_size and write to out_dir.
@@ -69,8 +70,12 @@ def preprocess_frames(
         if img is None:
             raise RuntimeError(f"preprocess: failed to read {f}")
         out, scale, pad_x, pad_y = _letterbox(img, target=target_size)
-        out_path = dst / f.name
-        ok = cv2.imwrite(str(out_path), out, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if fmt == "png":
+            out_path = dst / (f.stem + ".png")
+            ok = cv2.imwrite(str(out_path), out)
+        else:
+            out_path = dst / f.name
+            ok = cv2.imwrite(str(out_path), out, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         if not ok:
             raise RuntimeError(f"preprocess: failed to write {out_path}")
         per_frame.append({

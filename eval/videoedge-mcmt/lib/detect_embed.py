@@ -159,8 +159,15 @@ def detect_and_embed(
     t0 = time.perf_counter()
     n_frames = 0
 
-    for frame_path in sorted(src.glob("frame_*.jpg")):
-        info = per_frame.get(frame_path.name)
+    # Match both JPEG (legacy) and PNG (lossless preprocess for paper-grade
+    # data-plane comparison). Falls back gracefully if no frames in a
+    # particular extension.
+    candidates = sorted(list(src.glob("frame_*.png")) + list(src.glob("frame_*.jpg")))
+    for frame_path in candidates:
+        # preprocess_meta.json keys by the ORIGINAL frame name (.jpg from
+        # decode); when preprocess wrote .png we need to map back.
+        meta_name = frame_path.stem + ".jpg"
+        info = per_frame.get(meta_name) or per_frame.get(frame_path.name)
         if info is None:
             continue
         n_frames += 1

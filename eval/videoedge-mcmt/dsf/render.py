@@ -165,7 +165,8 @@ def _emit_task(
     )
 
 
-def render(n_cameras: int, clip_duration: int, scheduler: str, template_name: str) -> str:
+def render(n_cameras: int, clip_duration: int, scheduler: str, template_name: str,
+           preprocess_fmt: str = "png") -> str:
     if n_cameras < 1 or n_cameras > 16:
         raise ValueError(f"n_cameras out of supported range: {n_cameras}")
     if clip_duration not in (30, 60, 120):
@@ -228,7 +229,10 @@ def render(n_cameras: int, clip_duration: int, scheduler: str, template_name: st
             deps=[f"decode-{i}"],
             stage="preprocess",
             constraints_nodes=[sensor],  # co-located with decode
-            env={"VEMCMT_TARGET_SIZE": "640"},
+            env={
+                "VEMCMT_TARGET_SIZE": "640",
+                "VEMCMT_FMT": preprocess_fmt,
+            },
         ))
         tasks.append(_emit_task(
             name=f"detect-embed-{i}",
@@ -282,14 +286,18 @@ def main() -> None:
     ap.add_argument("--cameras", type=int, default=4)
     ap.add_argument("--duration", type=int, default=60, choices=[30, 60, 120])
     ap.add_argument("--scheduler", default="heft", choices=["heft", "random"])
+    ap.add_argument("--preprocess-fmt", default="png", choices=["png", "jpg"],
+                    help="intermediate-frame format emitted by preprocess "
+                         "(png = lossless, larger payloads; jpg = lossy q=88)")
     ap.add_argument("--name", default=None,
-                    help="ODAGTemplate name; default vemcmt-N<n>-D<d>-<scheduler>")
+                    help="ODAGTemplate name; default vemcmt-N<n>-D<d>-<fmt>-<scheduler>")
     ap.add_argument("-o", "--output", default="-",
                     help="output file (default stdout)")
     args = ap.parse_args()
 
-    name = args.name or f"vemcmt-n{args.cameras}-d{args.duration}-{args.scheduler}"
-    yaml = render(args.cameras, args.duration, args.scheduler, name)
+    name = args.name or f"vemcmt-n{args.cameras}-d{args.duration}-{args.preprocess_fmt}-{args.scheduler}"
+    yaml = render(args.cameras, args.duration, args.scheduler, name,
+                  preprocess_fmt=args.preprocess_fmt)
     if args.output == "-":
         sys.stdout.write(yaml)
     else:

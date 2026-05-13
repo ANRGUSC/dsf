@@ -35,7 +35,8 @@ def _compute_node_for(cam_idx_1based: int) -> str:
     return COMPUTE_NODES[(cam_idx_1based - 1) % len(COMPUTE_NODES)]
 
 
-def render(n_cameras: int, clip_duration: int, name: str, artifact_repo: str) -> str:
+def render(n_cameras: int, clip_duration: int, name: str, artifact_repo: str,
+           preprocess_fmt: str = "png") -> str:
     head = (
         f"apiVersion: argoproj.io/v1alpha1\n"
         f"kind: WorkflowTemplate\n"
@@ -184,6 +185,7 @@ def render(n_cameras: int, clip_duration: int, name: str, artifact_repo: str) ->
         env:
           - {{ name: VEMCMT_IN, value: /in/decode/output }}
           - {{ name: VEMCMT_OUT, value: /out/output }}
+          - {{ name: VEMCMT_FMT, value: "{preprocess_fmt}" }}
         volumeMounts: [{{ name: dev-dri, mountPath: /dev/dri }}]
         resources:
           requests: {{ cpu: "1",    memory: "1Gi" }}
@@ -279,14 +281,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cameras", type=int, default=4)
     ap.add_argument("--duration", type=int, default=60, choices=[30, 60, 120])
+    ap.add_argument("--preprocess-fmt", default="png", choices=["png", "jpg"])
     ap.add_argument("--name", default=None)
     ap.add_argument("--artifact-repo", default="e0bench-minio",
                     help="key in the argo artifact-repositories ConfigMap")
     ap.add_argument("-o", "--output", default="-")
     args = ap.parse_args()
 
-    name = args.name or f"vemcmt-n{args.cameras}-d{args.duration}-argo"
-    yaml = render(args.cameras, args.duration, name, args.artifact_repo)
+    name = args.name or f"vemcmt-n{args.cameras}-d{args.duration}-{args.preprocess_fmt}-argo"
+    yaml = render(args.cameras, args.duration, name, args.artifact_repo,
+                  preprocess_fmt=args.preprocess_fmt)
     if args.output == "-":
         sys.stdout.write(yaml)
     else:
