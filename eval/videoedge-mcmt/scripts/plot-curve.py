@@ -27,9 +27,22 @@ def parse_bytes_field(v: str) -> int | None:
         return None
 
 
+def _cell_sort_key(cell_dir: Path) -> tuple:
+    """Sort cells by camera count, then by clip duration, then by fmt (jpg
+    before png) so the curve reads D=30, D=60, D=120-jpg, D=120-png."""
+    name = cell_dir.name.replace("-pilot", "")
+    # name like n4-d30-jpg or n4-d120-png
+    parts = name.split("-")
+    n = int(parts[0][1:]) if parts[0].startswith("n") else 0
+    d = int(parts[1][1:]) if len(parts) > 1 and parts[1].startswith("d") else 0
+    fmt = parts[2] if len(parts) > 2 else ""
+    fmt_order = 0 if fmt == "jpg" else 1
+    return (n, d, fmt_order)
+
+
 def aggregate(results_dir: Path) -> list[dict]:
     rows_out = []
-    for cell_dir in sorted(results_dir.glob("n*-d*-*-pilot")):
+    for cell_dir in sorted(results_dir.glob("n*-d*-*-pilot"), key=_cell_sort_key):
         summary = cell_dir / "summary.csv"
         if not summary.is_file():
             continue
