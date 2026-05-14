@@ -5,11 +5,11 @@ Build the paper figure for the videoedge-mcmt curve.
 Reads each cell's results/<cell>-pilot/summary.csv and emits:
   - curve.csv  — per-cell aggregated stats (means/stds, paired deltas)
   - curve.pdf  — figure: x=intermediate bytes moved (Argo's MinIO transfer
-                 proxy = DSF bytes_out_total on the data plane), y=makespan,
-                 both DSF and Argo with error bars, paired-rep dots overlaid.
+                 proxy = Wayline bytes_out_total on the data plane), y=makespan,
+                 both Wayline and Argo with error bars, paired-rep dots overlaid.
 
 Argo doesn't expose a "bytes moved" counter (it goes through MinIO via the
-artifact controller), so the x-axis uses DSF's measured bytes_out_total as
+artifact controller), so the x-axis uses Wayline's measured bytes_out_total as
 a stand-in for the per-cell payload scale. That's a known interpretation —
 the figure tells a per-cell story, not a continuous-x regression.
 """
@@ -106,7 +106,7 @@ def write_figure(rows: list[dict], out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(6.5, 3.2))
     ax.errorbar(x, [r['dsf_mean']  for r in rows],
                 yerr=[r['dsf_std']  for r in rows],
-                marker='o', label='Wayline (DSF)', capsize=4, linewidth=2)
+                marker='o', label='Wayline', capsize=4, linewidth=2)
     ax.errorbar(x, [r['argo_mean'] for r in rows],
                 yerr=[r['argo_std'] for r in rows],
                 marker='s', label='Argo Workflows', capsize=4, linewidth=2)
